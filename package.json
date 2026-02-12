@@ -29,14 +29,14 @@
     "provenance": true
   },
   "dependencies": {
-    "stonyx": "file:../stonyx"
+    "stonyx": "0.2.3-beta.0"
   },
   "peerDependencies": {
     "@stonyx/rest-server": ">=0.2.0"
   },
   "devDependencies": {
-    "@stonyx/rest-server": "file:../stonyx-rest-server",
-    "@stonyx/utils": "file:../stonyx-utils",
+    "@stonyx/rest-server": "0.2.1-beta.1",
+    "@stonyx/utils": "0.2.3-beta.2",
     "qunit": "^2.24.1",
     "sinon": "^21.0.0"
   }
