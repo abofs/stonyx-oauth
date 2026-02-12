@@ -1,0 +1,10 @@
+# dependencies
+/node_modules/
+
+# os / IDE
+.vscode/*
+*.vsix%
+*DS_Store*
+
+# npm auth (never commit tokens)
+.npmrc

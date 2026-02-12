@@ -1,0 +1,43 @@
+{
+  "name": "@stonyx/oauth",
+  "keywords": [
+    "stonyx-async",
+    "stonyx-module"
+  ],
+  "version": "0.1.0-alpha.0",
+  "description": "OAuth2 authentication module for the Stonyx framework",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abofs/stonyx-oauth.git"
+  },
+  "main": "src/main.js",
+  "type": "module",
+  "exports": {
+    ".": "./src/main.js"
+  },
+  "scripts": {
+    "test": "stonyx test",
+    "prepublishOnly": "npm test"
+  },
+  "author": "Stone Costa",
+  "license": "Apache-2.0",
+  "contributors": [
+    "Stone Costa <stone.costa@synamicd.com>"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dependencies": {
+    "stonyx": "file:../stonyx"
+  },
+  "peerDependencies": {
+    "@stonyx/rest-server": ">=0.2.0"
+  },
+  "devDependencies": {
+    "@stonyx/rest-server": "file:../stonyx-rest-server",
+    "@stonyx/utils": "file:../stonyx-utils",
+    "qunit": "^2.24.1",
+    "sinon": "^21.0.0"
+  }
+}
