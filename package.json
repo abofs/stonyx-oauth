@@ -25,7 +25,8 @@
     "Stone Costa <stone.costa@synamicd.com>"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "dependencies": {
     "stonyx": "^0.2.0"
