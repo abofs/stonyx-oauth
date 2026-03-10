@@ -13,5 +13,6 @@ export default {
       }
     },
     sessionDuration: 3600,
+    frontendCallbackUrl: 'http://localhost:4200/auth/callback',
   }
 };

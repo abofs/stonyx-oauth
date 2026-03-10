@@ -2,9 +2,17 @@ import QUnit from 'qunit';
 import RestServer from '@stonyx/rest-server';
 import config from 'stonyx/config';
 import { setupIntegrationTests } from 'stonyx/test-helpers';
+import OAuth from '../../src/main.js';
 
 const { module, test } = QUnit;
 let endpoint;
+
+async function getValidState(endpoint) {
+  const loginResponse = await fetch(`${endpoint}/auth/login/mock`, { redirect: 'manual' });
+  const location = loginResponse.headers.get('location');
+  const url = new URL(location);
+  return url.searchParams.get('state');
+}
 
 module('[Integration] OAuth', function(hooks) {
   setupIntegrationTests(hooks);
@@ -34,21 +42,24 @@ module('[Integration] OAuth', function(hooks) {
     assert.equal(response.status, 404);
   });
 
-  test('GET /auth/callback/mock exchanges code and returns session', async function(assert) {
-    const response = await fetch(`${endpoint}/auth/callback/mock?code=test-auth-code&state=abc`);
-    const data = await response.json();
+  test('GET /auth/callback/mock with valid state redirects to frontend with session', async function(assert) {
+    const stateToken = await getValidState(endpoint);
+    const response = await fetch(`${endpoint}/auth/callback/mock?code=test-auth-code&state=${stateToken}`, { redirect: 'manual' });
 
-    assert.equal(response.status, 200);
-    assert.ok(data.sessionId);
-    assert.ok(data.user);
-    assert.equal(data.user.id, 'mock-user-123');
-    assert.equal(data.user.username, 'mockuser');
+    assert.equal(response.status, 302);
+
+    const location = response.headers.get('location');
+    const redirectUrl = new URL(location);
+    assert.equal(redirectUrl.origin + redirectUrl.pathname, 'http://localhost:4200/auth/callback');
+    assert.ok(redirectUrl.searchParams.get('sessionId'), 'redirect includes sessionId');
+    assert.ok(redirectUrl.searchParams.get('expiresAt'), 'redirect includes expiresAt');
   });
 
   test('GET /auth with valid session returns user', async function(assert) {
-    // Create a session first
-    const callbackResponse = await fetch(`${endpoint}/auth/callback/mock?code=test-code&state=abc`);
-    const { sessionId } = await callbackResponse.json();
+    const stateToken = await getValidState(endpoint);
+    const callbackResponse = await fetch(`${endpoint}/auth/callback/mock?code=test-code&state=${stateToken}`, { redirect: 'manual' });
+    const location = callbackResponse.headers.get('location');
+    const sessionId = new URL(location).searchParams.get('sessionId');
 
     const response = await fetch(`${endpoint}/auth`, {
       headers: { 'session-id': sessionId },
@@ -74,9 +85,10 @@ module('[Integration] OAuth', function(hooks) {
   });
 
   test('GET /auth/logout invalidates session', async function(assert) {
-    // Create a session
-    const callbackResponse = await fetch(`${endpoint}/auth/callback/mock?code=test-code&state=abc`);
-    const { sessionId } = await callbackResponse.json();
+    const stateToken = await getValidState(endpoint);
+    const callbackResponse = await fetch(`${endpoint}/auth/callback/mock?code=test-code&state=${stateToken}`, { redirect: 'manual' });
+    const location = callbackResponse.headers.get('location');
+    const sessionId = new URL(location).searchParams.get('sessionId');
 
     // Logout
     const logoutResponse = await fetch(`${endpoint}/auth/logout`, {
@@ -89,5 +101,49 @@ module('[Integration] OAuth', function(hooks) {
       headers: { 'session-id': sessionId },
     });
     assert.equal(authResponse.status, 401);
+  });
+
+  test('GET /auth/callback/mock rejects missing state token', async function(assert) {
+    const response = await fetch(`${endpoint}/auth/callback/mock?code=test-auth-code`, { redirect: 'manual' });
+
+    assert.equal(response.status, 302);
+    const location = response.headers.get('location');
+    const redirectUrl = new URL(location);
+    assert.equal(redirectUrl.searchParams.get('error'), 'auth_failed');
+  });
+
+  test('GET /auth/callback/mock rejects invalid state token', async function(assert) {
+    const response = await fetch(`${endpoint}/auth/callback/mock?code=test-auth-code&state=bogus-state`, { redirect: 'manual' });
+
+    assert.equal(response.status, 302);
+    const location = response.headers.get('location');
+    const redirectUrl = new URL(location);
+    assert.equal(redirectUrl.searchParams.get('error'), 'auth_failed');
+  });
+
+  test('GET /auth/callback/mock with error param redirects with error', async function(assert) {
+    const response = await fetch(`${endpoint}/auth/callback/mock?error=access_denied`, { redirect: 'manual' });
+
+    assert.equal(response.status, 302);
+    const location = response.headers.get('location');
+    const redirectUrl = new URL(location);
+    assert.equal(redirectUrl.origin + redirectUrl.pathname, 'http://localhost:4200/auth/callback');
+    assert.equal(redirectUrl.searchParams.get('error'), 'access_denied');
+  });
+
+  test('GET /auth/callback/mock state token cannot be reused', async function(assert) {
+    const stateToken = await getValidState(endpoint);
+
+    // First use succeeds
+    const first = await fetch(`${endpoint}/auth/callback/mock?code=test-code&state=${stateToken}`, { redirect: 'manual' });
+    assert.equal(first.status, 302);
+    const firstLocation = new URL(first.headers.get('location'));
+    assert.ok(firstLocation.searchParams.get('sessionId'), 'first use succeeds');
+
+    // Second use fails
+    const second = await fetch(`${endpoint}/auth/callback/mock?code=test-code&state=${stateToken}`, { redirect: 'manual' });
+    assert.equal(second.status, 302);
+    const secondLocation = new URL(second.headers.get('location'));
+    assert.equal(secondLocation.searchParams.get('error'), 'auth_failed', 'reuse is rejected');
   });
 });

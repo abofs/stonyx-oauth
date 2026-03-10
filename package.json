@@ -32,7 +32,7 @@
     "stonyx": "0.2.3-beta.4"
   },
   "peerDependencies": {
-    "@stonyx/rest-server": ">=0.2.0"
+    "@stonyx/rest-server": ">=0.2.1-beta.11"
   },
   "devDependencies": {
     "@stonyx/rest-server": "0.2.1-beta.11",

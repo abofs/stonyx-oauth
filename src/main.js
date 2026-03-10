@@ -8,6 +8,7 @@ import AuthRequest from './auth-request.js';
 
 export default class OAuth {
   providers = new Map();
+  pendingStates = new Map();
 
   constructor() {
     if (OAuth.instance) return OAuth.instance;
@@ -15,7 +16,8 @@ export default class OAuth {
   }
 
   async init() {
-    const { providers, sessionDuration } = config.oauth;
+    const { providers, sessionDuration, frontendCallbackUrl } = config.oauth;
+    this.frontendCallbackUrl = frontendCallbackUrl;
 
     for (const [name, providerConfig] of Object.entries(providers)) {
       const modulePath = providerConfig.module
@@ -43,10 +45,23 @@ export default class OAuth {
   getAuthorizationUrl(providerName) {
     const { flow } = this.getProvider(providerName);
     const stateToken = crypto.randomUUID();
+    this.pendingStates.set(stateToken, Date.now());
     return flow.buildAuthorizationUrl(stateToken);
   }
 
-  async handleCallback(providerName, code) {
+  async handleCallback(providerName, code, stateToken) {
+    if (!stateToken || !this.pendingStates.has(stateToken)) {
+      throw new Error('Invalid or missing state token');
+    }
+
+    const stateCreatedAt = this.pendingStates.get(stateToken);
+    this.pendingStates.delete(stateToken);
+
+    const TEN_MINUTES = 10 * 60 * 1000;
+    if (Date.now() - stateCreatedAt > TEN_MINUTES) {
+      throw new Error('State token has expired');
+    }
+
     const { flow, tokenManager } = this.getProvider(providerName);
     const tokens = await tokenManager.getTokens(code);
     const rawUser = await flow.fetchUserInfo(tokens.accessToken);

@@ -29,15 +29,38 @@ export default class AuthRequest extends Request {
         }
       },
 
-      '/callback/:provider': async (req) => {
+      '/callback/:provider': async (req, state) => {
         const { provider: providerName } = req.params;
-        const { code, state: stateToken } = req.query;
+        const { code, state: stateToken, error } = req.query;
+
+        if (error) {
+          if (this.oauth.frontendCallbackUrl) {
+            state.redirect = `${this.oauth.frontendCallbackUrl}?error=${encodeURIComponent(error)}`;
+            return;
+          }
+          return 400;
+        }
 
         if (!code) return 400;
 
         try {
-          return await this.oauth.handleCallback(providerName, code, stateToken);
+          const session = await this.oauth.handleCallback(providerName, code, stateToken);
+
+          if (this.oauth.frontendCallbackUrl) {
+            const params = new URLSearchParams({
+              sessionId: session.sessionId,
+              expiresAt: session.expiresAt,
+            });
+            state.redirect = `${this.oauth.frontendCallbackUrl}?${params}`;
+            return;
+          }
+
+          return session;
         } catch {
+          if (this.oauth.frontendCallbackUrl) {
+            state.redirect = `${this.oauth.frontendCallbackUrl}?error=auth_failed`;
+            return;
+          }
           return 500;
         }
       },
