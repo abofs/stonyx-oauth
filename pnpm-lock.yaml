@@ -13,8 +13,8 @@ importers:
         version: 0.2.3-beta.4
     devDependencies:
       '@stonyx/rest-server':
-        specifier: 0.2.1-beta.11
-        version: 0.2.1-beta.11
+        specifier: 0.2.1-beta.12
+        version: 0.2.1-beta.12
       '@stonyx/utils':
         specifier: 0.2.3-beta.4
         version: 0.2.3-beta.4
@@ -36,8 +36,8 @@ packages:
   '@sinonjs/samsam@9.0.2':
     resolution: {integrity: sha512-H/JSxa4GNKZuuU41E3b8Y3tbSEx8y4uq4UH1C56ONQac16HblReJomIvv3Ud7ANQHQmkeSowY49Ij972e/pGxQ==}
 
-  '@stonyx/rest-server@0.2.1-beta.11':
-    resolution: {integrity: sha512-mg/jbfjZ1bQ96L0rGAyQFg0sDzWdJgPWF5oFuivu4apeaJZZ5U08n+vpdsvXIkJRhOGQQfleMIEyv9HLwU6pjA==}
+  '@stonyx/rest-server@0.2.1-beta.12':
+    resolution: {integrity: sha512-Bup0UVMTcjz8MmADcapuPTFh8fcsY3xiKW7G+u3WWgQVqtDLp7it7+PCHE53cIwO1PGqTWJhw+X2jY1G9ApMTg==}
 
   '@stonyx/utils@0.2.3-beta.4':
     resolution: {integrity: sha512-3w2nTh9UqHSnhCKWP92ynupOYLuECkQKB2Xlex8x4UTJb9hgCMtcn+D0XGHX85AjgsW9VaL0p9cTE5LurXi/fA==}
@@ -398,7 +398,7 @@ snapshots:
       '@sinonjs/commons': 3.0.1
       type-detect: 4.1.0
 
-  '@stonyx/rest-server@0.2.1-beta.11':
+  '@stonyx/rest-server@0.2.1-beta.12':
     dependencies:
       cors: 2.8.6
       express: 5.2.1
