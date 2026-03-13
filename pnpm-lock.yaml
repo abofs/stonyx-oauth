@@ -16,8 +16,8 @@ importers:
         specifier: 0.2.1-beta.14
         version: 0.2.1-beta.14
       '@stonyx/utils':
-        specifier: 0.2.3-beta.4
-        version: 0.2.3-beta.4
+        specifier: 0.2.3-beta.5
+        version: 0.2.3-beta.5
       qunit:
         specifier: ^2.24.1
         version: 2.25.0
@@ -39,8 +39,8 @@ packages:
   '@stonyx/rest-server@0.2.1-beta.14':
     resolution: {integrity: sha512-92UCT9dvnRilDaY1CauhjrHBqYUHtWE7s6YwkF+8GsezjeASi9stFoF0lk2s3PrHE5lFd/MUzz49vEniiK3CFw==}
 
-  '@stonyx/utils@0.2.3-beta.4':
-    resolution: {integrity: sha512-3w2nTh9UqHSnhCKWP92ynupOYLuECkQKB2Xlex8x4UTJb9hgCMtcn+D0XGHX85AjgsW9VaL0p9cTE5LurXi/fA==}
+  '@stonyx/utils@0.2.3-beta.5':
+    resolution: {integrity: sha512-FRxrTg34yuXvDgxOWruZT2ybuyNIOOlLFI5SjFJeMd9oWvA5EbOKe7bi1yQ8jC/2cyp7tkEQLW6e9yQMjC0JYA==}
 
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
@@ -406,7 +406,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@stonyx/utils@0.2.3-beta.4': {}
+  '@stonyx/utils@0.2.3-beta.5': {}
 
   accepts@2.0.0:
     dependencies:
