@@ -29,8 +29,8 @@
     "provenance": true
   },
   "dependencies": {
-    "stonyx": "workspace:*",
-    "@stonyx/events": "workspace:*"
+    "stonyx": "0.2.3-beta.6",
+    "@stonyx/events": "0.1.1-beta.7"
   },
   "peerDependencies": {
     "@stonyx/rest-server": ">=0.2.1-beta.11"
