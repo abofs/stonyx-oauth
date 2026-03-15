@@ -1,10 +1,13 @@
 import config from 'stonyx/config';
 import log from 'stonyx/log';
 import { waitForModule } from 'stonyx';
+import { setup, emit } from '@stonyx/events';
 import RestServer from '@stonyx/rest-server';
 import TokenManager from './token-manager.js';
 import SessionManager from './session-manager.js';
 import AuthRequest from './auth-request.js';
+
+setup(['authenticate']);
 
 export default class OAuth {
   providers = new Map();
@@ -66,6 +69,7 @@ export default class OAuth {
     const tokens = await tokenManager.getTokens(code);
     const rawUser = await flow.fetchUserInfo(tokens.accessToken);
     const user = flow.normalizeUser(rawUser);
+    await emit('authenticate', user);
     return this.sessionManager.create(user, tokens);
   }
 

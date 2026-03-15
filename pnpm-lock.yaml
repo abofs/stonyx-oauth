@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@stonyx/events':
+        specifier: 0.1.1-beta.7
+        version: 0.1.1-beta.7
       stonyx:
         specifier: 0.2.3-beta.6
         version: 0.2.3-beta.6
@@ -35,6 +38,9 @@ packages:
 
   '@sinonjs/samsam@9.0.2':
     resolution: {integrity: sha512-H/JSxa4GNKZuuU41E3b8Y3tbSEx8y4uq4UH1C56ONQac16HblReJomIvv3Ud7ANQHQmkeSowY49Ij972e/pGxQ==}
+
+  '@stonyx/events@0.1.1-beta.7':
+    resolution: {integrity: sha512-0UyA6A7vT1xBTzOn/SvjZN0s3bhX4Q5pk+61uzwiLRmydKgw7+usChACeXYoL/qfio4xTlckb4QyY+Qnxu/ZKQ==}
 
   '@stonyx/rest-server@0.2.1-beta.16':
     resolution: {integrity: sha512-h9M/SLVnB1fNOZhxCBtB3BI2tkIR8RpPk9NOozWy4OUhJ2PEDtsumPuqQiU45U//ThuXkKow06A9kiEGqHj2xg==}
@@ -397,6 +403,8 @@ snapshots:
     dependencies:
       '@sinonjs/commons': 3.0.1
       type-detect: 4.1.0
+
+  '@stonyx/events@0.1.1-beta.7': {}
 
   '@stonyx/rest-server@0.2.1-beta.16':
     dependencies:
