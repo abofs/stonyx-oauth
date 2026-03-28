@@ -4,7 +4,7 @@
     "stonyx-async",
     "stonyx-module"
   ],
-  "version": "0.1.1-beta.22",
+  "version": "0.1.1-beta.23",
   "description": "OAuth2 authentication module for the Stonyx framework",
   "repository": {
     "type": "git",
@@ -29,14 +29,14 @@
     "provenance": true
   },
   "dependencies": {
-    "stonyx": "0.2.3-beta.7",
+    "stonyx": "0.2.3-beta.8",
     "@stonyx/events": "0.1.1-beta.7"
   },
   "peerDependencies": {
     "@stonyx/rest-server": ">=0.2.1-beta.11"
   },
   "devDependencies": {
-    "@stonyx/rest-server": "0.2.1-beta.22",
+    "@stonyx/rest-server": "0.2.1-beta.23",
     "@stonyx/utils": "0.2.3-beta.5",
     "qunit": "^2.24.1",
     "sinon": "^21.0.0"

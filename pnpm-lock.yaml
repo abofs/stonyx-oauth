@@ -12,12 +12,12 @@ importers:
         specifier: 0.1.1-beta.7
         version: 0.1.1-beta.7
       stonyx:
-        specifier: 0.2.3-beta.7
-        version: 0.2.3-beta.7
+        specifier: 0.2.3-beta.8
+        version: 0.2.3-beta.8
     devDependencies:
       '@stonyx/rest-server':
-        specifier: 0.2.1-beta.22
-        version: 0.2.1-beta.22
+        specifier: 0.2.1-beta.23
+        version: 0.2.1-beta.23
       '@stonyx/utils':
         specifier: 0.2.3-beta.5
         version: 0.2.3-beta.5
@@ -42,8 +42,8 @@ packages:
   '@stonyx/events@0.1.1-beta.7':
     resolution: {integrity: sha512-0UyA6A7vT1xBTzOn/SvjZN0s3bhX4Q5pk+61uzwiLRmydKgw7+usChACeXYoL/qfio4xTlckb4QyY+Qnxu/ZKQ==}
 
-  '@stonyx/rest-server@0.2.1-beta.22':
-    resolution: {integrity: sha512-q6mN3HqqTARXcISKMhaymbyes4h1CBbsaPmbKJWCxUuCb4K1D8DJZizipr97cg/T5WJS5Qqcn1K6pIQSC84XbQ==}
+  '@stonyx/rest-server@0.2.1-beta.23':
+    resolution: {integrity: sha512-ViRlbq+JJQGJuaF8ROtQ0RmwMaa8eUXJiSfKqvx+HBk+hpG8+NhE8crvyqAuVBoe1/pdeubmBHMMeTOltqnMfg==}
 
   '@stonyx/utils@0.2.3-beta.5':
     resolution: {integrity: sha512-FRxrTg34yuXvDgxOWruZT2ybuyNIOOlLFI5SjFJeMd9oWvA5EbOKe7bi1yQ8jC/2cyp7tkEQLW6e9yQMjC0JYA==}
@@ -344,8 +344,8 @@ packages:
     resolution: {integrity: sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw==}
     engines: {node: '>= 0.8'}
 
-  stonyx@0.2.3-beta.7:
-    resolution: {integrity: sha512-Z9vAmYiBkd26SGX5xojWgm4KvK7KWr0V1+rBzFLb0oKyL1wcMydf+BFromoGhXh3hHh9OlSwr6GA8ZNOVm3M7w==}
+  stonyx@0.2.3-beta.8:
+    resolution: {integrity: sha512-1wfyNTIj3s8m6o0LU5e0TzR417BXzFRA51RAKXHISPp5n88i5CXvcfy+7dJx1tSYz+JzNjDyPa9KikxpdgF/xg==}
     hasBin: true
 
   supports-color@7.2.0:
@@ -406,11 +406,11 @@ snapshots:
 
   '@stonyx/events@0.1.1-beta.7': {}
 
-  '@stonyx/rest-server@0.2.1-beta.22':
+  '@stonyx/rest-server@0.2.1-beta.23':
     dependencies:
       cors: 2.8.6
       express: 5.2.1
-      stonyx: 0.2.3-beta.7
+      stonyx: 0.2.3-beta.8
     transitivePeerDependencies:
       - supports-color
 
@@ -749,7 +749,7 @@ snapshots:
 
   statuses@2.0.2: {}
 
-  stonyx@0.2.3-beta.7:
+  stonyx@0.2.3-beta.8:
     dependencies:
       node-chronicle: 0.2.0
 
