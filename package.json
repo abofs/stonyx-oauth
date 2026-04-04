@@ -24,6 +24,11 @@
   "contributors": [
     "Stone Costa <stone.costa@synamicd.com>"
   ],
+  "files": [
+    "src",
+    "config",
+    "README.md"
+  ],
   "publishConfig": {
     "access": "public",
     "provenance": true
