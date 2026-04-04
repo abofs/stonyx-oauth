@@ -1,0 +1,13 @@
+name: Security Audit
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    uses: abofs/stonyx-workflows/.github/workflows/security-audit.yml@main
