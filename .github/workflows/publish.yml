@@ -19,9 +19,9 @@ on:
         type: string
   pull_request:
     types: [opened, synchronize, reopened]
-    branches: [main]
+    branches: [dev, main]
   push:
-    branches: [main]
+    branches: [dev, main]
 
 concurrency:
   group: ${{ github.event_name == 'repository_dispatch' && 'cascade-update' || format('publish-{0}', github.ref) }}
