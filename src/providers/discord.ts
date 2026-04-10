@@ -1,7 +1,33 @@
 import OAuthFlow from '../oauth-flow.js';
+import type { TokenResult } from '../oauth-flow.js';
+
+interface DiscordProviderConfig {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  scopes?: string[];
+  [key: string]: unknown;
+}
+
+interface DiscordUser {
+  id: string;
+  username: string;
+  global_name?: string;
+  avatar: string | null;
+  email?: string | null;
+}
+
+interface NormalizedDiscordUser {
+  id: string;
+  username: string;
+  displayName: string;
+  avatar: string | null;
+  email: string | null;
+  raw: DiscordUser;
+}
 
 export default class DiscordProvider extends OAuthFlow {
-  constructor(config) {
+  constructor(config: DiscordProviderConfig) {
     super({
       ...config,
       authorizationUrl: 'https://discord.com/oauth2/authorize',
@@ -10,7 +36,7 @@ export default class DiscordProvider extends OAuthFlow {
     });
   }
 
-  async exchangeCode(code) {
+  async exchangeCode(code: string): Promise<TokenResult> {
     const response = await fetch(this.tokenUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -34,7 +60,7 @@ export default class DiscordProvider extends OAuthFlow {
     };
   }
 
-  normalizeUser(rawUser) {
+  override normalizeUser(rawUser: DiscordUser): NormalizedDiscordUser {
     const { id, username, global_name, avatar, email } = rawUser;
 
     return {

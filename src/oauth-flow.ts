@@ -1,5 +1,29 @@
+export interface OAuthConfig {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  scopes?: string[];
+  authorizationUrl: string;
+  tokenUrl: string;
+  userInfoUrl: string;
+}
+
+export interface TokenResult {
+  accessToken: string;
+  refreshToken: string | null;
+  expiresIn: number;
+}
+
 export default class OAuthFlow {
-  constructor({ clientId, clientSecret, redirectUri, scopes, authorizationUrl, tokenUrl, userInfoUrl }) {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  scopes: string[];
+  authorizationUrl: string;
+  tokenUrl: string;
+  userInfoUrl: string;
+
+  constructor({ clientId, clientSecret, redirectUri, scopes, authorizationUrl, tokenUrl, userInfoUrl }: OAuthConfig) {
     this.clientId = clientId;
     this.clientSecret = clientSecret;
     this.redirectUri = redirectUri;
@@ -9,7 +33,7 @@ export default class OAuthFlow {
     this.userInfoUrl = userInfoUrl;
   }
 
-  buildAuthorizationUrl(stateToken) {
+  buildAuthorizationUrl(stateToken: string): string {
     const params = new URLSearchParams({
       client_id: this.clientId,
       redirect_uri: this.redirectUri,
@@ -21,7 +45,7 @@ export default class OAuthFlow {
     return `${this.authorizationUrl}?${params.toString()}`;
   }
 
-  async exchangeCode(code) {
+  async exchangeCode(code: string): Promise<TokenResult> {
     const response = await fetch(this.tokenUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -45,7 +69,7 @@ export default class OAuthFlow {
     };
   }
 
-  async refreshAccessToken(refreshToken) {
+  async refreshAccessToken(refreshToken: string): Promise<TokenResult> {
     const response = await fetch(this.tokenUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -68,7 +92,7 @@ export default class OAuthFlow {
     };
   }
 
-  async fetchUserInfo(accessToken) {
+  async fetchUserInfo(accessToken: string): Promise<unknown> {
     const response = await fetch(this.userInfoUrl, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
@@ -78,11 +102,11 @@ export default class OAuthFlow {
     return response.json();
   }
 
-  normalizeUser(rawUser) {
+  normalizeUser(rawUser: unknown): unknown {
     return { raw: rawUser };
   }
 
-  async revokeToken(_accessToken) {
+  async revokeToken(_accessToken: string): Promise<void> {
     // Optional — providers override if supported
   }
 }

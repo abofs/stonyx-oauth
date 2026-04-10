@@ -1,4 +1,4 @@
-import OAuthFlow from '../../../src/oauth-flow.js';
+import OAuthFlow from '@stonyx/oauth/oauth-flow';
 
 export default class MockProvider extends OAuthFlow {
   constructor(config) {
