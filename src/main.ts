@@ -6,28 +6,44 @@ import RestServer from '@stonyx/rest-server';
 import TokenManager from './token-manager.js';
 import SessionManager from './session-manager.js';
 import AuthRequest from './auth-request.js';
+import type OAuthFlow from './oauth-flow.js';
 
 setup(['authenticate']);
 
+interface ProviderEntry {
+  flow: OAuthFlow;
+  tokenManager: TokenManager;
+}
+
+interface ProviderConfig {
+  module?: string;
+  [key: string]: unknown;
+}
+
 export default class OAuth {
-  providers = new Map();
-  pendingStates = new Map();
+  static instance: OAuth | null;
+
+  providers = new Map<string, ProviderEntry>();
+  pendingStates = new Map<string, number>();
+  sessionManager!: SessionManager;
+  frontendCallbackUrl?: string;
 
   constructor() {
     if (OAuth.instance) return OAuth.instance;
     OAuth.instance = this;
   }
 
-  async init() {
-    const { providers, sessionDuration, frontendCallbackUrl } = config.oauth;
+  async init(): Promise<void> {
+    const oauthConfig = (config as unknown as Record<string, { providers: Record<string, ProviderConfig>; sessionDuration: number; frontendCallbackUrl?: string }>).oauth;
+    const { providers, sessionDuration, frontendCallbackUrl } = oauthConfig;
     this.frontendCallbackUrl = frontendCallbackUrl;
 
     for (const [name, providerConfig] of Object.entries(providers)) {
       const modulePath = providerConfig.module
-        ? `${config.rootPath}/${providerConfig.module}`
+        ? `${(config as unknown as { rootPath: string }).rootPath}/${providerConfig.module}`
         : `./providers/${name}.js`;
       const { default: Provider } = await import(modulePath);
-      const flow = new Provider(providerConfig);
+      const flow: OAuthFlow = new Provider(providerConfig);
       this.providers.set(name, { flow, tokenManager: new TokenManager(flow) });
     }
 
@@ -39,25 +55,25 @@ export default class OAuth {
     log.oauth?.('OAuth module initialized');
   }
 
-  getProvider(name) {
+  getProvider(name: string): ProviderEntry {
     const provider = this.providers.get(name);
     if (!provider) throw new Error(`OAuth provider "${name}" is not configured`);
     return provider;
   }
 
-  getAuthorizationUrl(providerName) {
+  getAuthorizationUrl(providerName: string): string {
     const { flow } = this.getProvider(providerName);
     const stateToken = crypto.randomUUID();
     this.pendingStates.set(stateToken, Date.now());
     return flow.buildAuthorizationUrl(stateToken);
   }
 
-  async handleCallback(providerName, code, stateToken) {
+  async handleCallback(providerName: string, code: string, stateToken: string) {
     if (!stateToken || !this.pendingStates.has(stateToken)) {
       throw new Error('Invalid or missing state token');
     }
 
-    const stateCreatedAt = this.pendingStates.get(stateToken);
+    const stateCreatedAt = this.pendingStates.get(stateToken)!;
     this.pendingStates.delete(stateToken);
 
     const TEN_MINUTES = 10 * 60 * 1000;
@@ -73,11 +89,11 @@ export default class OAuth {
     return this.sessionManager.create(user, tokens);
   }
 
-  getSession(sessionId) {
+  getSession(sessionId: string) {
     return this.sessionManager.validate(sessionId);
   }
 
-  logout(sessionId) {
+  logout(sessionId: string): void {
     this.sessionManager.destroy(sessionId);
   }
 }

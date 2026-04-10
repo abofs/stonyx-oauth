@@ -10,14 +10,39 @@
     "type": "git",
     "url": "git+https://github.com/abofs/stonyx-oauth.git"
   },
-  "main": "src/main.js",
+  "main": "dist/main.js",
   "type": "module",
   "exports": {
-    ".": "./src/main.js"
+    ".": {
+      "types": "./dist/main.d.ts",
+      "default": "./dist/main.js"
+    },
+    "./oauth-flow": {
+      "types": "./dist/oauth-flow.d.ts",
+      "default": "./dist/oauth-flow.js"
+    },
+    "./auth-request": {
+      "types": "./dist/auth-request.d.ts",
+      "default": "./dist/auth-request.js"
+    },
+    "./session-manager": {
+      "types": "./dist/session-manager.d.ts",
+      "default": "./dist/session-manager.js"
+    },
+    "./token-manager": {
+      "types": "./dist/token-manager.d.ts",
+      "default": "./dist/token-manager.js"
+    },
+    "./providers/discord": {
+      "types": "./dist/providers/discord.d.ts",
+      "default": "./dist/providers/discord.js"
+    }
   },
   "scripts": {
-    "test": "stonyx test",
-    "prepublishOnly": "npm test"
+    "build": "tsc",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "npm run build && npm run build:test && stonyx test 'dist-test/test/**/*-test.js'",
+    "prepublishOnly": "npm run build && npm test"
   },
   "author": "Stone Costa",
   "license": "Apache-2.0",
@@ -25,6 +50,7 @@
     "Stone Costa <stone.costa@synamicd.com>"
   ],
   "files": [
+    "dist",
     "src",
     "config",
     "README.md"
@@ -44,6 +70,7 @@
     "@stonyx/rest-server": "0.2.1-beta.30",
     "@stonyx/utils": "0.2.3-beta.7",
     "qunit": "^2.24.1",
-    "sinon": "^21.0.0"
+    "sinon": "^21.0.0",
+    "typescript": "^5.8.3"
   }
 }

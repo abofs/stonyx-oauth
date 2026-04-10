@@ -1,3 +1,7 @@
+# build output
+/dist/
+/dist-test/
+
 # dependencies
 /node_modules/
 

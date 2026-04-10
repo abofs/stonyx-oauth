@@ -1,13 +1,26 @@
 import { randomUUID } from 'node:crypto';
 
-export default class SessionManager {
-  sessions = new Map();
+interface SessionData {
+  user: unknown;
+  tokens: unknown;
+  expiresAt: number;
+}
 
-  constructor(duration) {
+export interface SessionResult {
+  sessionId: string;
+  user: unknown;
+  expiresAt: number;
+}
+
+export default class SessionManager {
+  sessions = new Map<string, SessionData>();
+  duration: number;
+
+  constructor(duration: number) {
     this.duration = duration;
   }
 
-  create(user, tokens) {
+  create(user: unknown, tokens: unknown): SessionResult {
     const sessionId = randomUUID();
     const expiresAt = Date.now() + (this.duration * 1000);
 
@@ -16,15 +29,15 @@ export default class SessionManager {
     return { sessionId, user, expiresAt };
   }
 
-  get(sessionId) {
+  get(sessionId: string): SessionData | null {
     return this.sessions.get(sessionId) || null;
   }
 
-  destroy(sessionId) {
+  destroy(sessionId: string): void {
     this.sessions.delete(sessionId);
   }
 
-  validate(sessionId) {
+  validate(sessionId: string): unknown {
     const session = this.get(sessionId);
     if (!session) return null;
 

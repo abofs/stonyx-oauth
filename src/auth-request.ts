@@ -1,14 +1,34 @@
 import { Request } from '@stonyx/rest-server';
 
+interface OAuthInstance {
+  frontendCallbackUrl?: string;
+  getSession(sessionId: string): unknown;
+  getAuthorizationUrl(providerName: string): string;
+  handleCallback(providerName: string, code: string, stateToken: string): Promise<{ sessionId: string; expiresAt: number }>;
+  logout(sessionId: string): void;
+}
+
+interface RouteRequest {
+  headers: Record<string, string | undefined>;
+  params: Record<string, string>;
+  query: Record<string, string>;
+}
+
+interface RouteState {
+  redirect?: string;
+}
+
 export default class AuthRequest extends Request {
-  constructor(oauth) {
+  oauth: OAuthInstance;
+
+  constructor(oauth: OAuthInstance) {
     super();
     this.oauth = oauth;
   }
 
   handlers = {
     get: {
-      '/': ({ headers }) => {
+      '/': ({ headers }: RouteRequest) => {
         const sessionId = headers['session-id'];
         if (!sessionId) return 401;
 
@@ -18,7 +38,7 @@ export default class AuthRequest extends Request {
         return user;
       },
 
-      '/login/:provider': (req, state) => {
+      '/login/:provider': (req: RouteRequest, state: RouteState) => {
         const { provider: providerName } = req.params;
 
         try {
@@ -29,7 +49,7 @@ export default class AuthRequest extends Request {
         }
       },
 
-      '/callback/:provider': async (req, state) => {
+      '/callback/:provider': async (req: RouteRequest, state: RouteState) => {
         const { provider: providerName } = req.params;
         const { code, state: stateToken, error } = req.query;
 
@@ -49,7 +69,7 @@ export default class AuthRequest extends Request {
           if (this.oauth.frontendCallbackUrl) {
             const params = new URLSearchParams({
               sessionId: session.sessionId,
-              expiresAt: session.expiresAt,
+              expiresAt: String(session.expiresAt),
             });
             state.redirect = `${this.oauth.frontendCallbackUrl}?${params}`;
             return;
@@ -65,7 +85,7 @@ export default class AuthRequest extends Request {
         }
       },
 
-      '/logout': ({ headers }) => {
+      '/logout': ({ headers }: RouteRequest) => {
         const sessionId = headers['session-id'];
         if (sessionId) this.oauth.logout(sessionId);
       },
