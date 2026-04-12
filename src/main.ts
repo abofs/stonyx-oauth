@@ -34,13 +34,13 @@ export default class OAuth {
   }
 
   async init(): Promise<void> {
-    const oauthConfig = (config as unknown as Record<string, { providers: Record<string, ProviderConfig>; sessionDuration: number; frontendCallbackUrl?: string }>).oauth;
+    const oauthConfig = config.oauth;
     const { providers, sessionDuration, frontendCallbackUrl } = oauthConfig;
     this.frontendCallbackUrl = frontendCallbackUrl;
 
     for (const [name, providerConfig] of Object.entries(providers)) {
       const modulePath = providerConfig.module
-        ? `${(config as unknown as { rootPath: string }).rootPath}/${providerConfig.module}`
+        ? `${config.rootPath}/${providerConfig.module}`
         : `./providers/${name}.js`;
       const { default: Provider } = await import(modulePath);
       const flow: OAuthFlow = new Provider(providerConfig);
@@ -73,7 +73,8 @@ export default class OAuth {
       throw new Error('Invalid or missing state token');
     }
 
-    const stateCreatedAt = this.pendingStates.get(stateToken)!;
+    const stateCreatedAt = this.pendingStates.get(stateToken);
+    if (stateCreatedAt === undefined) throw new Error('State token not found in pending states');
     this.pendingStates.delete(stateToken);
 
     const TEN_MINUTES = 10 * 60 * 1000;

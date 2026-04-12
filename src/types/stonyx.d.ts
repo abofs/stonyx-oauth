@@ -1,5 +1,15 @@
 declare module 'stonyx/config' {
-  const config: Record<string, unknown>;
+  interface OAuthConfig {
+    providers: Record<string, { module?: string; [key: string]: unknown }>;
+    sessionDuration: number;
+    frontendCallbackUrl?: string;
+  }
+  interface Config {
+    oauth: OAuthConfig;
+    rootPath: string;
+    [key: string]: unknown;
+  }
+  const config: Config;
   export default config;
 }
 
