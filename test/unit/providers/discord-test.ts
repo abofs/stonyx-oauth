@@ -12,7 +12,7 @@ const defaultConfig = {
 
 module('[Unit] DiscordProvider', function() {
   module('constructor', function() {
-    test('sets correct Discord OAuth2 URLs', function(assert) {
+    test('sets correct Discord OAuth2 URLs', function(assert: Assert) {
       const provider = new DiscordProvider(defaultConfig);
 
       assert.equal(provider.authorizationUrl, 'https://discord.com/oauth2/authorize');
@@ -20,7 +20,7 @@ module('[Unit] DiscordProvider', function() {
       assert.equal(provider.userInfoUrl, 'https://discord.com/api/users/@me');
     });
 
-    test('preserves client config', function(assert) {
+    test('preserves client config', function(assert: Assert) {
       const provider = new DiscordProvider(defaultConfig);
 
       assert.equal(provider.clientId, 'discord-client-id');
@@ -30,16 +30,16 @@ module('[Unit] DiscordProvider', function() {
   });
 
   module('exchangeCode', function() {
-    test('uses form-encoded body for Discord token exchange', async function(assert) {
+    test('uses form-encoded body for Discord token exchange', async function(assert: Assert) {
       const provider = new DiscordProvider(defaultConfig);
       const originalFetch = globalThis.fetch;
 
-      globalThis.fetch = async (url, options) => {
+      globalThis.fetch = (async (url: string | URL | Request, options?: RequestInit) => {
         assert.equal(url, 'https://discord.com/api/oauth2/token');
-        assert.equal(options.headers['Content-Type'], 'application/x-www-form-urlencoded');
-        assert.ok(options.body instanceof URLSearchParams);
+        assert.equal((options?.headers as Record<string, string>)?.['Content-Type'], 'application/x-www-form-urlencoded');
+        assert.ok(options?.body instanceof URLSearchParams);
 
-        const params = Object.fromEntries(options.body);
+        const params = Object.fromEntries(options!.body as URLSearchParams);
         assert.equal(params.grant_type, 'authorization_code');
         assert.equal(params.code, 'discord-auth-code');
         assert.equal(params.client_id, 'discord-client-id');
@@ -48,7 +48,7 @@ module('[Unit] DiscordProvider', function() {
           ok: true,
           json: async () => ({ access_token: 'discord-token', refresh_token: 'refresh', expires_in: 604800 }),
         };
-      };
+      }) as typeof fetch;
 
       const result = await provider.exchangeCode('discord-auth-code');
 
@@ -61,7 +61,7 @@ module('[Unit] DiscordProvider', function() {
   });
 
   module('normalizeUser', function() {
-    test('maps Discord user fields correctly', function(assert) {
+    test('maps Discord user fields correctly', function(assert: Assert) {
       const provider = new DiscordProvider(defaultConfig);
 
       const discordUser = {
@@ -82,7 +82,7 @@ module('[Unit] DiscordProvider', function() {
       assert.deepEqual(result.raw, discordUser);
     });
 
-    test('handles missing avatar', function(assert) {
+    test('handles missing avatar', function(assert: Assert) {
       const provider = new DiscordProvider(defaultConfig);
 
       const result = provider.normalizeUser({
@@ -92,7 +92,7 @@ module('[Unit] DiscordProvider', function() {
       assert.equal(result.avatar, null);
     });
 
-    test('falls back to username when global_name is missing', function(assert) {
+    test('falls back to username when global_name is missing', function(assert: Assert) {
       const provider = new DiscordProvider(defaultConfig);
 
       const result = provider.normalizeUser({
@@ -102,7 +102,7 @@ module('[Unit] DiscordProvider', function() {
       assert.equal(result.displayName, 'myuser');
     });
 
-    test('handles missing email', function(assert) {
+    test('handles missing email', function(assert: Assert) {
       const provider = new DiscordProvider(defaultConfig);
 
       const result = provider.normalizeUser({

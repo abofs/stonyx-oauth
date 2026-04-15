@@ -9,7 +9,7 @@ export default {
         clientSecret: 'test-client-secret',
         redirectUri: 'http://localhost:2666/auth/callback/mock',
         scopes: ['identify'],
-        module: './test/sample/providers/mock.js',
+        module: './test/sample/providers/mock.ts',
       }
     },
     sessionDuration: 3600,

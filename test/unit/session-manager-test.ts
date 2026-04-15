@@ -35,7 +35,7 @@ module('[Unit] SessionManager', function() {
       const session = manager.get(sessionId);
 
       assert.ok(session);
-      assert.deepEqual(session.user, mockUser);
+      assert.deepEqual(session!.user, mockUser);
     });
 
     test('returns null for unknown session ID', function(assert) {
