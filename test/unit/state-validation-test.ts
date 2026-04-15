@@ -12,12 +12,12 @@ const { module, test } = QUnit;
 
 const TEN_MINUTES = 10 * 60 * 1000;
 
-function validateState(pendingStates, stateToken) {
+function validateState(pendingStates: Map<string, number>, stateToken: string | undefined): void {
   if (!stateToken || !pendingStates.has(stateToken)) {
     throw new Error('Invalid or missing state token');
   }
 
-  const stateCreatedAt = pendingStates.get(stateToken);
+  const stateCreatedAt = pendingStates.get(stateToken)!;
   pendingStates.delete(stateToken);
 
   if (Date.now() - stateCreatedAt > TEN_MINUTES) {
@@ -27,7 +27,7 @@ function validateState(pendingStates, stateToken) {
 
 module('[Unit] State Validation', function() {
   test('accepts a valid pending state token', function(assert) {
-    const pendingStates = new Map();
+    const pendingStates = new Map<string, number>();
     pendingStates.set('valid-token', Date.now());
 
     validateState(pendingStates, 'valid-token');
@@ -35,7 +35,7 @@ module('[Unit] State Validation', function() {
   });
 
   test('consumes the state token after validation', function(assert) {
-    const pendingStates = new Map();
+    const pendingStates = new Map<string, number>();
     pendingStates.set('one-time-token', Date.now());
 
     validateState(pendingStates, 'one-time-token');
@@ -43,7 +43,7 @@ module('[Unit] State Validation', function() {
   });
 
   test('rejects a missing state token', function(assert) {
-    const pendingStates = new Map();
+    const pendingStates = new Map<string, number>();
 
     assert.throws(
       () => validateState(pendingStates, undefined),
@@ -52,7 +52,7 @@ module('[Unit] State Validation', function() {
   });
 
   test('rejects an empty string state token', function(assert) {
-    const pendingStates = new Map();
+    const pendingStates = new Map<string, number>();
 
     assert.throws(
       () => validateState(pendingStates, ''),
@@ -61,7 +61,7 @@ module('[Unit] State Validation', function() {
   });
 
   test('rejects an unknown state token', function(assert) {
-    const pendingStates = new Map();
+    const pendingStates = new Map<string, number>();
     pendingStates.set('known-token', Date.now());
 
     assert.throws(
@@ -71,7 +71,7 @@ module('[Unit] State Validation', function() {
   });
 
   test('rejects an expired state token (older than 10 minutes)', function(assert) {
-    const pendingStates = new Map();
+    const pendingStates = new Map<string, number>();
     const elevenMinutesAgo = Date.now() - (11 * 60 * 1000);
     pendingStates.set('expired-token', elevenMinutesAgo);
 
@@ -82,7 +82,7 @@ module('[Unit] State Validation', function() {
   });
 
   test('expired state token is still consumed', function(assert) {
-    const pendingStates = new Map();
+    const pendingStates = new Map<string, number>();
     const elevenMinutesAgo = Date.now() - (11 * 60 * 1000);
     pendingStates.set('expired-token', elevenMinutesAgo);
 
@@ -96,7 +96,7 @@ module('[Unit] State Validation', function() {
   });
 
   test('accepts a token just under 10 minutes old', function(assert) {
-    const pendingStates = new Map();
+    const pendingStates = new Map<string, number>();
     const nineMinutesAgo = Date.now() - (9 * 60 * 1000);
     pendingStates.set('fresh-token', nineMinutesAgo);
 
@@ -105,7 +105,7 @@ module('[Unit] State Validation', function() {
   });
 
   test('rejects reuse of a previously valid token', function(assert) {
-    const pendingStates = new Map();
+    const pendingStates = new Map<string, number>();
     pendingStates.set('use-once', Date.now());
 
     validateState(pendingStates, 'use-once');

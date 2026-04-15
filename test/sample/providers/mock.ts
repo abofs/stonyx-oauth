@@ -1,7 +1,24 @@
 import OAuthFlow from '@stonyx/oauth/oauth-flow';
+import type { OAuthConfig, TokenResult } from '../../../src/oauth-flow.js';
+
+interface MockUser {
+  id: string;
+  username: string;
+  displayName: string;
+  email: string;
+}
+
+interface NormalizedMockUser {
+  id: string;
+  username: string;
+  displayName: string;
+  avatar: null;
+  email: string;
+  raw: MockUser;
+}
 
 export default class MockProvider extends OAuthFlow {
-  constructor(config) {
+  constructor(config: Omit<OAuthConfig, 'authorizationUrl' | 'tokenUrl' | 'userInfoUrl'>) {
     super({
       ...config,
       authorizationUrl: 'https://mock.provider/oauth/authorize',
@@ -10,7 +27,7 @@ export default class MockProvider extends OAuthFlow {
     });
   }
 
-  async exchangeCode(_code) {
+  async exchangeCode(_code: string): Promise<TokenResult> {
     return {
       accessToken: 'mock-access-token',
       refreshToken: 'mock-refresh-token',
@@ -18,7 +35,7 @@ export default class MockProvider extends OAuthFlow {
     };
   }
 
-  async fetchUserInfo(_accessToken) {
+  async fetchUserInfo(_accessToken: string): Promise<MockUser> {
     return {
       id: 'mock-user-123',
       username: 'mockuser',
@@ -27,7 +44,7 @@ export default class MockProvider extends OAuthFlow {
     };
   }
 
-  normalizeUser(rawUser) {
+  normalizeUser(rawUser: MockUser): NormalizedMockUser {
     return {
       id: rawUser.id,
       username: rawUser.username,

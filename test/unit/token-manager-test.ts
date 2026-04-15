@@ -1,22 +1,24 @@
 import QUnit from 'qunit';
 import TokenManager from '../../src/token-manager.js';
+import type OAuthFlow from '../../src/oauth-flow.js';
+import type { TokenResult } from '../../src/oauth-flow.js';
 
 const { module, test } = QUnit;
 
-function createMockFlow() {
+function createMockFlow(): OAuthFlow {
   return {
-    exchangeCode: async (code) => ({
+    exchangeCode: async (code: string): Promise<TokenResult> => ({
       accessToken: `token-for-${code}`,
       refreshToken: 'refresh-123',
       expiresIn: 3600,
     }),
-    refreshAccessToken: async (refreshToken) => ({
+    refreshAccessToken: async (refreshToken: string): Promise<TokenResult> => ({
       accessToken: 'new-access',
       refreshToken,
       expiresIn: 7200,
     }),
-    revokeToken: async () => {},
-  };
+    revokeToken: async (): Promise<void> => {},
+  } as unknown as OAuthFlow;
 }
 
 module('[Unit] TokenManager', function() {
@@ -45,7 +47,7 @@ module('[Unit] TokenManager', function() {
   module('revoke', function() {
     test('delegates to flow.revokeToken', async function(assert) {
       let revoked = false;
-      const flow = { ...createMockFlow(), revokeToken: async () => { revoked = true; } };
+      const flow = { ...createMockFlow(), revokeToken: async (): Promise<void> => { revoked = true; } } as unknown as OAuthFlow;
       const manager = new TokenManager(flow);
 
       await manager.revoke('some-token');
