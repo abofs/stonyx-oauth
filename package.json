@@ -61,7 +61,7 @@
   },
   "pnpm": {
     "overrides": {
-      "stonyx": "0.2.3-beta.53",
+      "stonyx": "0.2.3-beta.61",
       "@stonyx/utils": "0.2.3-beta.22",
       "@stonyx/logs": "1.0.1-beta.16"
     }
