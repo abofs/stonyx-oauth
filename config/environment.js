@@ -1,7 +1,7 @@
 export default {
-  providers: {} as Record<string, unknown>,
+  providers: {},
   sessionDuration: 86400,
-  frontendCallbackUrl: null as string | null,
+  frontendCallbackUrl: null,
   logColor: 'magenta',
   logMethod: 'oauth',
 };
