@@ -4,7 +4,7 @@
     "stonyx-async",
     "stonyx-module"
   ],
-  "version": "0.1.1-beta.83",
+  "version": "0.1.1-beta.84",
   "description": "OAuth2 authentication module for the Stonyx framework",
   "repository": {
     "type": "git",
