@@ -41,8 +41,8 @@
   "scripts": {
     "build": "tsc",
     "build:test": "tsc -p tsconfig.test.json",
-    "test": "npm run build && NODE_OPTIONS='--import tsx' stonyx test 'test/**/*-test.ts'",
-    "prepublishOnly": "npm run build && npm test"
+    "test": "pnpm build && NODE_ENV=test node --import tsx/esm --import ./test/setup.ts node_modules/qunit/bin/qunit.js 'test/**/*-test.ts'",
+    "prepublishOnly": "npm test"
   },
   "author": "Stone Costa",
   "license": "Apache-2.0",
@@ -59,16 +59,24 @@
     "access": "public",
     "provenance": true
   },
+  "pnpm": {
+    "overrides": {
+      "stonyx": "0.2.3-beta.53",
+      "@stonyx/utils": "0.2.3-beta.22",
+      "@stonyx/logs": "1.0.1-beta.16"
+    }
+  },
   "dependencies": {
     "@stonyx/events": "0.1.1-beta.9",
-    "stonyx": "0.2.3-beta.11"
+    "stonyx": "0.2.3-beta.53"
   },
   "peerDependencies": {
     "@stonyx/rest-server": ">=0.2.1-beta.11"
   },
   "devDependencies": {
     "@stonyx/rest-server": "0.2.1-beta.30",
-    "@stonyx/utils": "0.2.3-beta.7",
+    "@stonyx/utils": "0.2.3-beta.22",
+    "@stonyx/logs": "1.0.1-beta.16",
     "@types/qunit": "^2.19.13",
     "@types/sinon": "^21.0.1",
     "qunit": "^2.24.1",
