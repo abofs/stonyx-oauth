@@ -3,6 +3,8 @@ declare module 'stonyx/config' {
     providers: Record<string, { module?: string; [key: string]: unknown }>;
     sessionDuration: number;
     frontendCallbackUrl?: string;
+    logColor?: string;
+    logMethod?: string;
   }
   interface Config {
     oauth: OAuthConfig;
@@ -14,7 +16,12 @@ declare module 'stonyx/config' {
 }
 
 declare module 'stonyx/log' {
-  const log: Record<string, ((...args: unknown[]) => void) | undefined>;
+  interface Log {
+    oauth(message: string): void;
+    defineType(type: string, setting: string, options?: Record<string, unknown> | null): void;
+    [key: string]: unknown;
+  }
+  const log: Log;
   export default log;
 }
 
