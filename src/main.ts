@@ -34,6 +34,11 @@ export default class OAuth {
   }
 
   async init(): Promise<void> {
+    // Self-register so log.oauth works even when @stonyx/oauth is in the
+    // consumer's `dependencies` (stonyx loader only merges devDependencies).
+    const { logColor = 'magenta', logMethod = 'oauth' } = config.oauth;
+    log.defineType(logMethod, logColor);
+
     const oauthConfig = config.oauth;
     const { providers, sessionDuration, frontendCallbackUrl } = oauthConfig;
     this.frontendCallbackUrl = frontendCallbackUrl;
