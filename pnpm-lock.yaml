@@ -14,8 +14,8 @@ importers:
   .:
     dependencies:
       '@stonyx/events':
-        specifier: 0.1.1-beta.51
-        version: 0.1.1-beta.51
+        specifier: 0.1.1-beta.52
+        version: 0.1.1-beta.52
       stonyx:
         specifier: 0.2.3-beta.61
         version: 0.2.3-beta.61
@@ -215,8 +215,8 @@ packages:
   '@sinonjs/samsam@9.0.2':
     resolution: {integrity: sha512-H/JSxa4GNKZuuU41E3b8Y3tbSEx8y4uq4UH1C56ONQac16HblReJomIvv3Ud7ANQHQmkeSowY49Ij972e/pGxQ==}
 
-  '@stonyx/events@0.1.1-beta.51':
-    resolution: {integrity: sha512-cfqekoEu+qr/FI/DG7ygg1SUF5ywxm+P5U8n4STvlV4bN6Wogk9uwlEDSXOTTSMuN5kzoIF3nFFcxtnK+rbN4w==}
+  '@stonyx/events@0.1.1-beta.52':
+    resolution: {integrity: sha512-q5UeH70TOlxz2/F7EQT6rNrFGkhww9Jo2V5Lw1esizxPlKR5fp70U+yOBC2WVTi2MWDxtzdH97XUgS95wr5VyA==}
 
   '@stonyx/logs@1.0.1-beta.16':
     resolution: {integrity: sha512-6UccOlU3hnVDKSruFZ/uGXBjK/i8USNjjc7me3ooUxSVbSn+tWhdgkWH/CWDymmvOz+A/FBdDD3dPr1nchbZqQ==}
@@ -670,7 +670,7 @@ snapshots:
       '@sinonjs/commons': 3.0.1
       type-detect: 4.1.0
 
-  '@stonyx/events@0.1.1-beta.51': {}
+  '@stonyx/events@0.1.1-beta.52': {}
 
   '@stonyx/logs@1.0.1-beta.16':
     dependencies:
