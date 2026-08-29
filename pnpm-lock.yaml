@@ -24,8 +24,8 @@ importers:
         specifier: 1.0.1-beta.16
         version: 1.0.1-beta.16
       '@stonyx/rest-server':
-        specifier: 0.2.1-beta.74
-        version: 0.2.1-beta.74
+        specifier: 0.2.1-beta.75
+        version: 0.2.1-beta.75
       '@stonyx/utils':
         specifier: 0.2.3-beta.22
         version: 0.2.3-beta.22
@@ -221,8 +221,8 @@ packages:
   '@stonyx/logs@1.0.1-beta.16':
     resolution: {integrity: sha512-6UccOlU3hnVDKSruFZ/uGXBjK/i8USNjjc7me3ooUxSVbSn+tWhdgkWH/CWDymmvOz+A/FBdDD3dPr1nchbZqQ==}
 
-  '@stonyx/rest-server@0.2.1-beta.74':
-    resolution: {integrity: sha512-ekpXXsykbzMjTRxaFS6mnemmuPHzE5j5q4pnny7DVxfx9iyfJtHpPK5O2quBJR/+AiqPRESpi8OSoaL3zuwNyQ==}
+  '@stonyx/rest-server@0.2.1-beta.75':
+    resolution: {integrity: sha512-fSUIgXgt6rgCk2fK1PCQR3TgYnSM3qhP7ofAh4a9fPy+3/hikGGCMPJ/6t0OjozeHOUfKPUKd5KZzJOJkiMi3Q==}
 
   '@stonyx/utils@0.2.3-beta.22':
     resolution: {integrity: sha512-VNEL+BnWBYL3qRiQB4fXiKlTPCRRRzgc7T93RmdZuMy8kfZ/t5LYQy2N+CnvHUigUmap/3KykJ0heDsjB8dh/w==}
@@ -676,7 +676,7 @@ snapshots:
     dependencies:
       chalk: 5.6.2
 
-  '@stonyx/rest-server@0.2.1-beta.74':
+  '@stonyx/rest-server@0.2.1-beta.75':
     dependencies:
       cors: 2.8.6
       express: 5.2.1
