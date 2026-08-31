@@ -55,9 +55,73 @@ The module self-registers the following routes on the rest server:
 | Method | Route | Description |
 |--------|-------|-------------|
 | `GET` | `/auth` | Validate session — send `session-id` header, returns user or 401 |
-| `GET` | `/auth/login/:provider` | Redirects to provider's OAuth2 authorization page |
-| `GET` | `/auth/callback/:provider` | OAuth2 callback — exchanges code for tokens, creates session |
+| `GET` | `/auth/login/:provider` | Redirects to provider's OAuth2 authorization page, and sets the state binding cookie |
+| `GET` | `/auth/callback/:provider` | OAuth2 callback — verifies the state binding, exchanges code for tokens, creates session |
 | `GET` | `/auth/logout` | Destroys session (send `session-id` header) |
+
+### Starting the flow
+
+Send the browser to `/auth/login/:provider` as a **top-level navigation**:
+
+```javascript
+window.location.href = 'https://api.example.com/auth/login/discord';
+```
+
+Do not start the flow with `fetch()` or `XMLHttpRequest`. The login response
+sets the state binding cookie described below, and the browser must be holding
+that cookie when the provider redirects it back to `/auth/callback/:provider`.
+
+## State Binding (CSRF Protection)
+
+The OAuth2 `state` parameter only protects against login CSRF if it is bound to
+the client that started the flow. This module binds it with a cookie.
+
+On `GET /auth/login/:provider` the module issues a random 32-byte binding value,
+stores only a SHA-256 digest of it server-side alongside the provider name and
+issue time, and sends the plaintext to the client as a cookie:
+
+| Attribute | Value | Why |
+|-----------|-------|-----|
+| Name | `stonyx_oauth_state` | |
+| `HttpOnly` | set | script must not be able to read or forge the binding value |
+| `SameSite` | `Lax` | **required.** The callback is a cross-site, top-level `GET` navigation from the provider. `SameSite=Strict` withholds the cookie on exactly that request and breaks login outright; `SameSite=None` requires `Secure` and widens exposure for no benefit |
+| `Path` | `/auth` | the cookie is only ever read by the callback route |
+| `Secure` | set when the request arrived over HTTPS | |
+| `Max-Age` | 600 (10 minutes) | matches the pending state's lifetime |
+
+`GET /auth/callback/:provider` accepts the callback only when all of the
+following hold, and mints no session otherwise:
+
+- the `state` is one this server issued and has not already been used
+- it was issued for **this** provider
+- it was issued less than 10 minutes ago
+- the request carries the binding cookie whose value hashes to the stored digest
+
+The state and the cookie are both single-use: the pending record is consumed on
+any callback that presents a recognised `state` — successful or not — and the
+callback response clears the cookie.
+
+If the cookie cannot be set, `GET /auth/login/:provider` responds `500` rather
+than issuing a state it cannot bind. A reverse proxy or CDN that strips
+`Set-Cookie` from redirect responses will therefore break login rather than
+silently degrade it.
+
+### Custom flow drivers
+
+Consumers that drive the flow themselves instead of using the routes above must
+carry the binding value between the two calls:
+
+```javascript
+const { url, bindingValue } = oauth.getAuthorizationUrl('discord');
+// hand bindingValue to the client, then on the callback:
+const session = await oauth.handleCallback('discord', code, state, bindingValue);
+```
+
+> **Changed in the release that fixes [#36](https://github.com/abofs/stonyx-oauth/issues/36):**
+> `getAuthorizationUrl(provider)` returned a URL string and now returns
+> `{ url, bindingValue }`; `handleCallback(provider, code, state)` takes a
+> fourth argument, the client's binding value. Applications using the
+> self-registering `/auth` routes need no changes.
 
 ## Officially Supported Providers
 
@@ -119,6 +183,8 @@ providers: {
 ## Session Management
 
 Sessions are stored in-memory using a `Map`. Sessions are lost on server restart.
+Pending OAuth states are held in-memory too, so a restart mid-login, or more
+than one instance behind a load balancer, will reject the callback.
 
 Clients should store the `sessionId` returned from the callback and send it as a `session-id` header on subsequent requests.
 
