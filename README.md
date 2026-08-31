@@ -86,8 +86,41 @@ issue time, and sends the plaintext to the client as a cookie:
 | `HttpOnly` | set | script must not be able to read or forge the binding value |
 | `SameSite` | `Lax` | **required.** The callback is a cross-site, top-level `GET` navigation from the provider. `SameSite=Strict` withholds the cookie on exactly that request and breaks login outright; `SameSite=None` requires `Secure` and widens exposure for no benefit |
 | `Path` | `/auth` | the cookie is only ever read by the callback route |
-| `Secure` | set on every host except loopback (`localhost`, `127.0.0.0/8`, `::1`, `0.0.0.0`) | deriving it from `req.secure` would omit it in the standard production topology: behind a TLS-terminating proxy Express reports the request as plaintext unless `trust proxy` is enabled, and `@stonyx/rest-server` leaves that off by default. A non-loopback plaintext deployment therefore cannot store this cookie — that failure is loud and deliberate, in preference to a silently insecure production cookie |
+| `Secure` | set on every host except loopback | deriving it from `req.secure` would omit it in the standard production topology: behind a TLS-terminating proxy Express reports the request as plaintext unless `trust proxy` is enabled, and `@stonyx/rest-server` leaves that off by default. A non-loopback plaintext deployment therefore cannot store this cookie — that failure is loud and deliberate, in preference to a silently insecure production cookie. The exemption rule is exact; see below |
 | `Max-Age` | 600 (10 minutes) | matches the pending state's lifetime |
+
+#### Which hosts are exempt from `Secure`
+
+The exemption is decided by parsing the `Host` header and testing the result for
+membership. It is never a prefix or suffix match on the raw header value,
+because `Host` is attacker-controllable from any non-browser client.
+
+Exempt, and nothing else:
+
+- `localhost` (case-insensitive)
+- any address in `127.0.0.0/8` — a dotted quad of four decimal octets whose
+  first is `127`, so `127.0.0.2` is exempt and `127.evil.com` is not
+- `::1` (and its expanded form), and the IPv4-mapped loopback spellings
+  `::ffff:127.0.0.1` and `::ffff:7f00:1`
+- the wildcard bind addresses `0.0.0.0` and `::`
+
+Everything else gets `Secure`, including:
+
+- **`*.localhost`.** A `.localhost` suffix was exempt in an earlier draft of
+  this module and is not any more: a split-horizon vhost under that zone would
+  have shipped the binding value in cleartext. Develop against `localhost` or
+  `127.0.0.1`, which reach the same server.
+- any `Host` that is not a well-formed `host[:port]` — a non-numeric port, a
+  userinfo segment (`localhost:80@evil.com`), a comma-joined multi-value, or a
+  character a registered name may not contain
+- a request carrying **more than one `Host` header**. Node collapses repeats
+  into the first value, so an upstream component that prepends rather than
+  replaces a `Host:` line could otherwise downgrade the cookie on a response to
+  someone else. RFC 9112 section 3.2 makes such a request invalid; this module
+  treats it as unattributable.
+- a request carrying **no `Host` header** at all
+
+`X-Forwarded-Host` is deliberately **not** consulted.
 
 `GET /auth/callback/:provider` accepts the callback only when all of the
 following hold, and mints no session otherwise:

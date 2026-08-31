@@ -13,10 +13,53 @@ interface AuthorizationRequest {
 }
 
 /**
- * Hosts treated as a development origin, and the only ones exempt from
- * `Secure` on the binding cookie. See `AuthRequest.isSecureContext`.
+ * Hosts treated as a development origin by exact match, and — together with
+ * `127.0.0.0/8` and the IPv4-mapped IPv6 spellings of it — the only ones exempt
+ * from `Secure` on the binding cookie. See `AuthRequest.isSecureContext`.
+ *
+ * `0.0.0.0` and `::` are the wildcard bind addresses a developer reaches a
+ * local server on; `127.0.0.1` is covered by the `127.0.0.0/8` test rather than
+ * listed here, so the two are not silently redundant.
  */
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
+const LOOPBACK_HOSTS = new Set(['localhost', '::1', '0:0:0:0:0:0:0:1', '0.0.0.0', '::']);
+
+/** `host` values whose port component is anything but a decimal port are rejected. */
+const PORT_PATTERN = /^\d{1,5}$/;
+
+/**
+ * The characters RFC 1123 permits in a registered hostname, plus `.`.
+ *
+ * Anything else — `@`, `,`, whitespace, `/` — means the value is not a bare
+ * hostname, and the caller fails secure rather than guessing. This is what
+ * rejects `localhost:80@evil.com` and a comma-joined multi-value `Host`.
+ */
+const HOSTNAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/** A dotted-quad whose first octet is 127, i.e. real `127.0.0.0/8` membership. */
+function isLoopbackIpv4(hostname: string): boolean {
+  const octets = hostname.split('.');
+  if (octets.length !== 4) return false;
+  if (!octets.every(octet => /^\d{1,3}$/.test(octet) && Number(octet) <= 255)) return false;
+
+  return Number(octets[0]) === 127;
+}
+
+/**
+ * IPv4-mapped IPv6 loopback, in both spellings a dual-stack listener produces:
+ * `::ffff:127.0.0.1` and `::ffff:7f00:1`.
+ */
+function isLoopbackIpv6(hostname: string): boolean {
+  const mapped = /^::ffff:(.+)$/.exec(hostname);
+  if (!mapped) return false;
+
+  const rest = mapped[1];
+  if (isLoopbackIpv4(rest)) return true;
+
+  const hextets = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(rest);
+  if (!hextets) return false;
+
+  return parseInt(hextets[1], 16) >>> 8 === 127;
+}
 
 interface OAuthInstance {
   frontendCallbackUrl?: string;
@@ -55,6 +98,13 @@ interface ResponseLike {
 
 interface RouteRequest {
   headers: Record<string, string | undefined>;
+  /**
+   * Node's flat `[name, value, name, value, ...]` header list, when the runtime
+   * supplies it. Read only to detect a *duplicate* `Host`: Node collapses
+   * repeats into the first value, so `req.headers.host` alone cannot tell an
+   * unambiguous origin from a smuggled one.
+   */
+  rawHeaders?: string[];
   params: Record<string, string>;
   query: Record<string, string>;
   secure?: boolean;
@@ -190,24 +240,98 @@ export default class AuthRequest extends Request {
    * at the first login and is loud. The alternative fails silently, in
    * production, on the one attribute protecting the value this whole mechanism
    * is built around.
+   *
+   * The exemption is decided by *parsing* the `Host` header and testing the
+   * result for membership, never by matching a prefix or a suffix on the raw
+   * value — `Host` is attacker-controllable on any non-browser client, and a
+   * security predicate written as a substring match drifts. Every shape that
+   * cannot be parsed as a bare `host[:port]`, and every request with more than
+   * one `Host`, fails secure.
    */
   isSecureContext(req: RouteRequest): boolean {
     if (req.secure === true) return true;
+    if (AuthRequest.hasAmbiguousHost(req)) return true;
 
     const host = req.headers.host;
     if (!host) return true;
 
-    // `[::1]:2666` -> `::1`; `localhost:2666` -> `localhost`.
-    const hostname = (host.startsWith('[')
-      ? host.slice(1, host.indexOf(']'))
-      : host.split(':')[0]
-    ).toLowerCase();
+    const hostname = AuthRequest.parseHostname(host);
+    if (hostname === undefined) return true;
 
-    if (LOOPBACK_HOSTS.has(hostname)) return false;
-    if (hostname.startsWith('127.')) return false;
-    if (hostname === 'localhost' || hostname.endsWith('.localhost')) return false;
+    return !AuthRequest.isLoopbackHost(hostname);
+  }
 
-    return true;
+  /**
+   * True when the request carried more than one `Host` header.
+   *
+   * Node keeps the first and discards the rest, so a component that *prepends*
+   * a `Host:` line — request smuggling, or a proxy that appends rather than
+   * replaces — can make `req.headers.host` read `localhost` on a request whose
+   * real origin is public. RFC 9112 section 3.2 makes such a request invalid;
+   * this treats it as unattributable and fails secure rather than trusting it.
+   */
+  static hasAmbiguousHost(req: RouteRequest): boolean {
+    const raw = req.rawHeaders;
+    if (!Array.isArray(raw)) return false;
+
+    let seen = 0;
+    for (let index = 0; index < raw.length; index += 2) {
+      if (typeof raw[index] === 'string' && raw[index].toLowerCase() === 'host') seen++;
+    }
+
+    return seen > 1;
+  }
+
+  /**
+   * The hostname component of a `Host` header, lowercased, or `undefined` when
+   * the value is not a well-formed `host[:port]`.
+   *
+   * `host.split(':')[0]` is not enough: it truncates at the *first* colon, so
+   * `localhost:80@evil.com` reduces to `localhost`. The port is therefore
+   * required to be decimal, and the hostname to contain only characters a
+   * registered name may contain.
+   */
+  static parseHostname(host: string): string | undefined {
+    if (host.startsWith('[')) {
+      const close = host.indexOf(']');
+      if (close === -1) return undefined;
+
+      const port = host.slice(close + 1);
+      if (port !== '' && !(port.startsWith(':') && PORT_PATTERN.test(port.slice(1)))) return undefined;
+
+      const literal = host.slice(1, close);
+      if (!/^[0-9A-Fa-f:.]+$/.test(literal)) return undefined;
+
+      return literal.toLowerCase();
+    }
+
+    const colon = host.indexOf(':');
+    if (colon === -1) return HOSTNAME_PATTERN.test(host) ? host.toLowerCase() : undefined;
+
+    if (!PORT_PATTERN.test(host.slice(colon + 1))) return undefined;
+
+    const name = host.slice(0, colon);
+
+    return HOSTNAME_PATTERN.test(name) ? name.toLowerCase() : undefined;
+  }
+
+  /**
+   * Whether a parsed hostname is a loopback development origin.
+   *
+   * Membership tests, never prefix or suffix tests. `startsWith('127.')`
+   * matched `127.evil.com`, a perfectly registerable name (RFC 1123 permits a
+   * leading digit in a label), and `endsWith('.localhost')` exempted an entire
+   * suffix — so a `.localhost` split-horizon vhost shipped the binding value in
+   * cleartext. The `.localhost` exemption is withdrawn rather than tightened:
+   * the README documented `127.0.0.0/8`, `localhost`, `::1` and `0.0.0.0` and
+   * never documented it, and a developer on `app.localhost` reaches the same
+   * server on `localhost` or `127.0.0.1`.
+   */
+  static isLoopbackHost(hostname: string): boolean {
+    if (LOOPBACK_HOSTS.has(hostname)) return true;
+    if (isLoopbackIpv4(hostname)) return true;
+
+    return isLoopbackIpv6(hostname);
   }
 
   setBindingCookie(req: RouteRequest, bindingValue: string): boolean {

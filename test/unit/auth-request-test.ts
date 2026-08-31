@@ -37,9 +37,14 @@ interface FakeRequestOptions {
   secure?: boolean;
   /** Simulates a deployment where `req.res` is not an Express response. */
   withRes?: boolean;
+  /**
+   * Every `Host` line the request carried, in order. Node collapses repeats
+   * into `headers.host` (the first), so the duplicate is only visible here.
+   */
+  hostLines?: string[];
 }
 
-function buildRequest({ cookie, host = 'api.example.com', secure, withRes = true }: FakeRequestOptions = {}) {
+function buildRequest({ cookie, host = 'api.example.com', secure, withRes = true, hostLines }: FakeRequestOptions = {}) {
   const cookies: CookieCall[] = [];
   const cleared: CookieCall[] = [];
 
@@ -52,11 +57,16 @@ function buildRequest({ cookie, host = 'api.example.com', secure, withRes = true
     },
   };
 
+  const lines = hostLines ?? (host === null ? [] : [host]);
+  const rawHeaders = lines.flatMap(value => ['Host', value]);
+
   const req = {
     headers: {
-      ...(host === null ? {} : { host }),
+      // Node keeps the first Host and discards the rest.
+      ...(lines.length === 0 ? {} : { host: lines[0] }),
       ...(cookie === undefined ? {} : { cookie }),
     } as Record<string, string | undefined>,
+    rawHeaders,
     params: { provider: 'mock' } as Record<string, string>,
     query: {} as Record<string, string>,
     secure,
@@ -124,15 +134,101 @@ module('[Unit] AuthRequest binding cookie', function() {
 
   // GUARD — passes on current head. Pins the one exemption, so a later
   // "always Secure" simplification cannot silently break plaintext local dev.
+  //
+  // The list is wider than the three hosts it used to hold. `127.0.0.1` and
+  // `localhost` are both in the exact-match set, so a suite that only ever
+  // presents those two cannot see the `127.0.0.0/8` test, the IPv6-mapped
+  // forms, or the `.toLowerCase()` — each of which was individually removable
+  // at 74/0. `127.0.0.2` kills the /8 test, `LOCALHOST` kills the lowercasing,
+  // and the two `::ffff:` spellings kill the mapped-IPv4 branch.
   test('GUARD #36 the binding cookie is not Secure on a loopback host', function(assert) {
     const authRequest = buildAuthRequest();
 
-    for (const host of ['localhost:2666', '127.0.0.1:2666', '[::1]:2666']) {
+    const loopback = [
+      'localhost:2666',
+      'LOCALHOST:2666',
+      'localhost',
+      '127.0.0.1:2666',
+      '127.0.0.2:2666',
+      '127.255.255.254',
+      '[::1]:2666',
+      '[::ffff:127.0.0.1]:8080',
+      '[::ffff:7f00:1]',
+      '0.0.0.0:2666',
+    ];
+
+    for (const host of loopback) {
       const { req, cookies } = buildRequest({ host, secure: false });
       authRequest.handlers.get['/login/:provider'](req, {});
 
       assert.false(cookies[0].options.secure, `${host} is treated as a development origin`);
     }
+  });
+
+  // DEFECT — fails against the pre-fix tree, where the loopback predicate was
+  // `startsWith('127.')`, `endsWith('.localhost')` and `split(':')[0]`. Each of
+  // the hosts below satisfied one of those three and shipped the binding value
+  // without `Secure` on a deployment that is not loopback in any sense.
+  test('#36 a non-loopback host that merely resembles loopback still gets Secure', function(assert) {
+    const authRequest = buildAuthRequest();
+
+    const spoofs = [
+      // `startsWith('127.')` is a string prefix, not 127.0.0.0/8 membership.
+      // RFC 1123 permits a leading digit in a label, so this is registerable.
+      '127.evil.com',
+      '127.0.0.1.evil.com',
+      '127.0.0.1.nip.io',
+      // `endsWith('.localhost')` exempted an entire suffix.
+      'evil.localhost',
+      'app.localhost',
+      'localhost.evil.com',
+      // `split(':')[0]` truncates at the first colon, so userinfo defeated it.
+      'localhost:80@evil.com',
+      '127.0.0.1:80@evil.com',
+      // Not a bare host[:port] at all — fail secure rather than guess.
+      'localhost, api.example.com',
+      'localhost/../api.example.com',
+      '[::1',
+      '127.0.0.256',
+    ];
+
+    for (const host of spoofs) {
+      const { req, cookies } = buildRequest({ host, secure: false });
+      authRequest.handlers.get['/login/:provider'](req, {});
+
+      assert.true(cookies[0].options.secure, `${host} is not granted the development exemption`);
+    }
+  });
+
+  // DEFECT — fails against the pre-fix tree. Node collapses repeated `Host`
+  // headers into the first value, so an upstream component that prepends a
+  // `Host:` line rather than replacing it downgrades the cookie on a victim's
+  // response. RFC 9112 section 3.2 makes the request invalid; treat it as
+  // unattributable.
+  test('#36 a request carrying more than one Host header gets Secure', function(assert) {
+    const authRequest = buildAuthRequest();
+
+    const { req, cookies } = buildRequest({
+      hostLines: ['localhost', 'api.example.com'],
+      secure: false,
+    });
+    authRequest.handlers.get['/login/:provider'](req, {});
+
+    assert.equal(req.headers.host, 'localhost', 'Node exposes only the first Host');
+    assert.true(cookies[0].options.secure, 'an ambiguous origin is not granted the exemption');
+  });
+
+  // GUARD — passes on current head. Pins the `req.secure === true` early
+  // return, which is the only leg of `isSecureContext` that fails *unsafe* when
+  // removed. It is invisible on a non-loopback host, because the host test
+  // reaches the same answer; only HTTPS-on-loopback separates them.
+  test('GUARD #36 an https request on a loopback host still gets Secure', function(assert) {
+    const authRequest = buildAuthRequest();
+    const { req, cookies } = buildRequest({ host: 'localhost:2666', secure: true });
+
+    authRequest.handlers.get['/login/:provider'](req, {});
+
+    assert.true(cookies[0].options.secure, 'a TLS request is never downgraded by the dev exemption');
   });
 
   test('#36 the binding cookie is Secure when the request carries no Host header', function(assert) {
