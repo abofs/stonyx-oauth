@@ -85,7 +85,20 @@ export default class OAuth {
     return { url: flow.buildAuthorizationUrl(stateToken), bindingValue };
   }
 
-  async handleCallback(providerName: string, code: string, stateToken: string, bindingValue?: string) {
+  /**
+   * `bindingValue` is required, not optional (#36). An optional parameter lets
+   * an existing three-argument call site keep compiling and then fail at
+   * runtime on the first real login; a compile error is the loudest disclosure
+   * channel available for this break. It is typed as possibly-undefined
+   * because the route handler passes through whatever the client presented,
+   * and `StateStore.consume` rejects falsy explicitly.
+   */
+  async handleCallback(
+    providerName: string,
+    code: string,
+    stateToken: string,
+    bindingValue: string | undefined,
+  ) {
     this.stateStore.consume(stateToken, providerName, bindingValue);
 
     const { flow, tokenManager } = this.getProvider(providerName);

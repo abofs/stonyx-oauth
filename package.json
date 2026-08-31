@@ -4,7 +4,7 @@
     "stonyx-async",
     "stonyx-module"
   ],
-  "version": "0.1.1-beta.120",
+  "version": "0.2.0-beta.1",
   "description": "OAuth2 authentication module for the Stonyx framework",
   "repository": {
     "type": "git",
@@ -16,10 +16,6 @@
     ".": {
       "types": "./dist/main.d.ts",
       "default": "./dist/main.js"
-    },
-    "./constants": {
-      "types": "./dist/constants.d.ts",
-      "default": "./dist/constants.js"
     },
     "./oauth-flow": {
       "types": "./dist/oauth-flow.d.ts",

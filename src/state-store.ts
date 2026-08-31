@@ -73,9 +73,22 @@ export default class StateStore {
   /**
    * Validates and consumes a pending state. Throws on every rejection path.
    *
-   * The record is removed as soon as the state is recognised — before the
-   * binding is checked — so a state cannot survive a failed attempt and be
-   * used as a target for guessing the binding value.
+   * The record is removed as soon as the state is recognised — before the TTL,
+   * provider and binding checks — so every state gets exactly one attempt
+   * whatever the outcome.
+   *
+   * That uniformity is the justification, not brute-force resistance:
+   * guessing `BINDING_VALUE_BYTES` of CSPRNG output is infeasible whether or
+   * not the record survives. What retaining it would buy an attacker is a
+   * repeatable, unauthenticated oracle on this endpoint for the state's full
+   * lifetime — and the safety of that would then rest entirely on an entropy
+   * constant a future change can lower. One attempt per state is a structural
+   * property; entropy arithmetic is not.
+   *
+   * The trade is real: an attacker who already knows a victim's state can burn
+   * it, and the victim must restart at `/auth/login/:provider`. That vector is
+   * accepted deliberately — it requires the victim's `randomUUID` state, and
+   * it is self-healing on retry.
    */
   consume(stateToken: string | undefined, provider: string, bindingValue: string | undefined): void {
     if (!stateToken) throw new Error('Invalid or missing state token');

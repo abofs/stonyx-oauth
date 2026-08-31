@@ -26,7 +26,7 @@ interface OAuthInstance {
     providerName: string,
     code: string,
     stateToken: string,
-    bindingValue?: string,
+    bindingValue: string | undefined,
   ): Promise<{ sessionId: string; expiresAt: number }>;
   logout(sessionId: string): void;
 }
