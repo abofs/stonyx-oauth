@@ -141,8 +141,16 @@ retrying does not help. Trying all of them concedes nothing, because the
 attacker would still have to present the victim's own binding value.
 
 The state and the cookie are both single-use: the pending record is consumed on
-any callback that presents a recognised `state` — successful or not — and the
-callback response clears the cookie.
+any callback that presents a recognised `state` — successful or not — and that
+same response clears the cookie, scoped to `Path=/auth` so the deletion actually
+reaches the cookie that was set.
+
+A callback that consumes **nothing** — an unrecognised or absent `state`, a
+provider `error`, a missing `code` — leaves the cookie alone. That is not
+tidiness: `/auth/callback/:provider?code=1` is a request any attacker can induce
+as a top-level navigation while a victim is still at the provider's consent
+screen, and clearing on it would delete the victim's binding cookie without
+touching anything the server could later notice.
 
 Two distinct failure modes surface on two different routes. They are unrelated,
 and the route is the fastest way to tell them apart:

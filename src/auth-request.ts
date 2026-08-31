@@ -1,5 +1,6 @@
 import { Request } from '@stonyx/rest-server';
 import log from 'stonyx/log';
+import { StateRejection } from './state-store.js';
 import {
   MAX_BINDING_COOKIE_CANDIDATES,
   STATE_COOKIE_NAME,
@@ -169,16 +170,12 @@ export default class AuthRequest extends Request {
 
         if (!code) return 400;
 
-        // The binding value is single-use, so this callback is the end of that
-        // cookie's life — but only from here down, where the state is actually
-        // consumed. Clearing above the two early returns denied login to a
-        // client still at the provider's consent screen, via an
-        // attacker-induced navigation to `?error=...` that needs no knowledge
-        // of the victim's state at all.
-        this.clearBindingCookie(req);
-
         try {
           const session = await this.oauth.handleCallback(providerName, code, stateToken, bindingValues);
+
+          // The binding value is single-use and the state has now been
+          // consumed, so this is the end of that cookie's life.
+          this.clearBindingCookie(req);
 
           if (this.oauth.frontendCallbackUrl) {
             const params = new URLSearchParams({
@@ -191,6 +188,24 @@ export default class AuthRequest extends Request {
 
           return session;
         } catch (rejection) {
+          // Clear only when this request actually spent the cookie.
+          //
+          // Moving the clear below the `error` and `!code` returns was not
+          // enough: it still ran unconditionally for any request carrying a
+          // `code`, and `code` is attacker-supplied and unvalidated. So
+          // `?code=1` — one query parameter, no knowledge of the victim's state
+          // — deleted the binding cookie of a client still at the provider's
+          // consent screen, leaving their pending state untouched so nothing
+          // was detectable server-side, and their real callback then failed.
+          //
+          // `StateRejection.consumed` is the only thing that distinguishes
+          // "nothing of this client's was touched" from "one attempt was
+          // spent". Anything that is not a `StateRejection` was thrown below
+          // the state check, which means the record was already burned.
+          if (!(rejection instanceof StateRejection) || rejection.consumed) {
+            this.clearBindingCookie(req);
+          }
+
           // `StateStore.consume` distinguishes five rejection reasons that
           // otherwise collapse into one opaque outcome with no server-side
           // signal at all. The client-facing `auth_failed` stays opaque; the

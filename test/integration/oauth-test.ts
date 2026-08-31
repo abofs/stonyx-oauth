@@ -275,6 +275,65 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
       /Expires=Thu, 01 Jan 1970/i.test(cleared ?? '') || /Max-Age=0/i.test(cleared ?? ''),
       'binding cookie is expired at the client'
     );
+    // GUARD. A browser keys cookies by name + domain + path, so a deletion sent
+    // for `/` does not delete a cookie stored under `/auth` — the clear would
+    // be a no-op at the client while this test stayed green. Written against
+    // the literal path for the same reason the Max-Age assertion above is.
+    assert.ok(
+      /;\s*Path=\/auth\b/i.test(cleared ?? ''),
+      'the deletion is scoped to the path the cookie was set on, or it clears nothing',
+    );
+  });
+
+  // DEFECT — fails against the pre-fix tree. Moving the clear below the `error`
+  // and `!code` returns closed the two shapes that were tested and nothing
+  // else: it still ran unconditionally for any request carrying a `code`, and
+  // `code` is attacker-supplied and unvalidated. One query parameter turns the
+  // closed attack back on.
+  test('#36 a callback carrying an arbitrary code and no valid state does not clear an in-flight binding cookie', async function(assert: Assert) {
+    const clientA = await login();
+
+    // The whole attack: a top-level navigation the attacker induces with a
+    // link or a meta refresh while the victim is at the consent screen.
+    // `SameSite=Lax` permits the cookie on a cross-site top-level GET, and
+    // permits the deletion cookie in the response.
+    const response = await fetch(`${endpoint}/auth/callback/mock?code=1`, {
+      redirect: 'manual',
+      headers: cookieHeaders(clientA.cookieHeader),
+    });
+
+    const touched = response.headers.getSetCookie()
+      .find(cookie => cookie.startsWith(`${STATE_COOKIE_NAME}=`));
+
+    assert.notOk(touched, 'a request that consumed nothing does not clear the cookie');
+
+    // `fetch` has no cookie jar, so the client-side deletion is not observable
+    // here — only the absence of the header is. This leg proves the victim's
+    // flow is still completable, which is the property the attack destroyed.
+    const result = await callback({ state: clientA.state, cookieHeader: clientA.cookieHeader });
+    assert.ok(result.sessionId, 'the victim can still complete the login that was in flight');
+  });
+
+  // GUARD — passes on current head. The other direction: a callback that *did*
+  // recognise a state has spent that cookie, so it must still be cleared. Pins
+  // the fix to "clear where the state is consumed" rather than "never clear".
+  test('GUARD #36 a rejected callback that burned a recognised state does clear the binding cookie', async function(assert: Assert) {
+    const clientA = await login();
+    const clientB = await login();
+
+    const response = await fetch(
+      `${endpoint}/auth/callback/mock?code=test-auth-code&state=${clientA.state}`,
+      { redirect: 'manual', headers: cookieHeaders(clientB.cookieHeader) }
+    );
+
+    const cleared = response.headers.getSetCookie()
+      .find(cookie => cookie.startsWith(`${STATE_COOKIE_NAME}=`));
+
+    assert.ok(cleared, 'the attempt was spent, so the cookie is cleared');
+    assert.ok(
+      /Expires=Thu, 01 Jan 1970/i.test(cleared ?? '') || /Max-Age=0/i.test(cleared ?? ''),
+      'and it is a deletion, not a re-issue'
+    );
   });
 
   // DEFECT — fails against the pre-fix tree, where the parser returned on the
