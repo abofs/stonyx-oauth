@@ -6,6 +6,7 @@ import RestServer from '@stonyx/rest-server';
 import TokenManager from './token-manager.js';
 import SessionManager from './session-manager.js';
 import AuthRequest from './auth-request.js';
+import StateStore from './state-store.js';
 import type OAuthFlow from './oauth-flow.js';
 
 setup(['authenticate']);
@@ -20,11 +21,22 @@ interface ProviderConfig {
   [key: string]: unknown;
 }
 
+export interface AuthorizationRequest {
+  /** Provider authorization URL to redirect the client to. */
+  url: string;
+  /**
+   * Client-held half of the state binding (#36). The caller must hand this to
+   * the client that started the flow — the auth routes set it as an HttpOnly
+   * cookie — and present it back to `handleCallback`.
+   */
+  bindingValue: string;
+}
+
 export default class OAuth {
   static instance: OAuth | null;
 
   providers = new Map<string, ProviderEntry>();
-  pendingStates = new Map<string, number>();
+  stateStore = new StateStore();
   sessionManager!: SessionManager;
   frontendCallbackUrl?: string;
 
@@ -66,26 +78,32 @@ export default class OAuth {
     return provider;
   }
 
-  getAuthorizationUrl(providerName: string): string {
+  getAuthorizationUrl(providerName: string): AuthorizationRequest {
     const { flow } = this.getProvider(providerName);
-    const stateToken = crypto.randomUUID();
-    this.pendingStates.set(stateToken, Date.now());
-    return flow.buildAuthorizationUrl(stateToken);
+    const { stateToken, bindingValue } = this.stateStore.issue(providerName);
+
+    return { url: flow.buildAuthorizationUrl(stateToken), bindingValue };
   }
 
-  async handleCallback(providerName: string, code: string, stateToken: string) {
-    if (!stateToken || !this.pendingStates.has(stateToken)) {
-      throw new Error('Invalid or missing state token');
-    }
-
-    const stateCreatedAt = this.pendingStates.get(stateToken);
-    if (stateCreatedAt === undefined) throw new Error('State token not found in pending states');
-    this.pendingStates.delete(stateToken);
-
-    const TEN_MINUTES = 10 * 60 * 1000;
-    if (Date.now() - stateCreatedAt > TEN_MINUTES) {
-      throw new Error('State token has expired');
-    }
+  /**
+   * `bindingValues` is required, not optional (#36). An optional parameter lets
+   * an existing three-argument call site keep compiling and then fail at
+   * runtime on the first real login; a compile error is the loudest disclosure
+   * channel available for this break.
+   *
+   * It is an array, not a single value, because a client can hold more than one
+   * cookie of the binding cookie's name and every one of them has to be tried —
+   * see `StateStore.anyCandidateMatches`. A caller driving the flow itself
+   * passes `[bindingValue]`; the route handler passes through every value the
+   * client presented, which may be none.
+   */
+  async handleCallback(
+    providerName: string,
+    code: string,
+    stateToken: string,
+    bindingValues: readonly string[],
+  ) {
+    this.stateStore.consume(stateToken, providerName, bindingValues);
 
     const { flow, tokenManager } = this.getProvider(providerName);
     const tokens = await tokenManager.getTokens(code);
