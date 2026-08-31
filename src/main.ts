@@ -86,20 +86,24 @@ export default class OAuth {
   }
 
   /**
-   * `bindingValue` is required, not optional (#36). An optional parameter lets
+   * `bindingValues` is required, not optional (#36). An optional parameter lets
    * an existing three-argument call site keep compiling and then fail at
    * runtime on the first real login; a compile error is the loudest disclosure
-   * channel available for this break. It is typed as possibly-undefined
-   * because the route handler passes through whatever the client presented,
-   * and `StateStore.consume` rejects falsy explicitly.
+   * channel available for this break.
+   *
+   * It is an array, not a single value, because a client can hold more than one
+   * cookie of the binding cookie's name and every one of them has to be tried —
+   * see `StateStore.anyCandidateMatches`. A caller driving the flow itself
+   * passes `[bindingValue]`; the route handler passes through every value the
+   * client presented, which may be none.
    */
   async handleCallback(
     providerName: string,
     code: string,
     stateToken: string,
-    bindingValue: string | undefined,
+    bindingValues: readonly string[],
   ) {
-    this.stateStore.consume(stateToken, providerName, bindingValue);
+    this.stateStore.consume(stateToken, providerName, bindingValues);
 
     const { flow, tokenManager } = this.getProvider(providerName);
     const tokens = await tokenManager.getTokens(code);

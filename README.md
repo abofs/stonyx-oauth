@@ -128,7 +128,17 @@ following hold, and mints no session otherwise:
 - the `state` is one this server issued and has not already been used
 - it was issued for **this** provider
 - it was issued less than 10 minutes ago
-- the request carries the binding cookie whose value hashes to the stored digest
+- the request carries a binding cookie whose value hashes to the stored digest
+
+A client can hold more than one cookie of that name — a sibling subdomain can
+set one on the parent domain, and the browser sends every applicable cookie in
+a single header. **Every** value carrying the name is tried, up to eight, and
+the callback is accepted if any of them matches. Reading only the first would
+let anyone who can plant a cookie on the victim's domain deny them login
+permanently: RFC 6265 section 5.4 sorts a planted cookie ahead of the real one
+on equal paths, and the state is burned on every recognised callback, so
+retrying does not help. Trying all of them concedes nothing, because the
+attacker would still have to present the victim's own binding value.
 
 The state and the cookie are both single-use: the pending record is consumed on
 any callback that presents a recognised `state` — successful or not — and the
@@ -172,14 +182,18 @@ carry the binding value between the two calls:
 ```javascript
 const { url, bindingValue } = oauth.getAuthorizationUrl('discord');
 // hand bindingValue to the client, then on the callback:
-const session = await oauth.handleCallback('discord', code, state, bindingValue);
+const session = await oauth.handleCallback('discord', code, state, [bindingValue]);
 ```
+
+The fourth argument is an **array** — every value the client presented under the
+binding cookie's name. A driver that holds exactly one value passes
+`[bindingValue]`; one that holds none passes `[]`.
 
 > **Changed in the release that fixes [#36](https://github.com/abofs/stonyx-oauth/issues/36):**
 > `getAuthorizationUrl(provider)` returned a URL string and now returns
 > `{ url, bindingValue }`; `handleCallback(provider, code, state)` takes a
-> fourth argument, the client's binding value. Applications using the
-> self-registering `/auth` routes need no changes.
+> required fourth argument, the client's binding values, as an array.
+> Applications using the self-registering `/auth` routes need no changes.
 
 ## Officially Supported Providers
 

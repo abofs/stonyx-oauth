@@ -14,6 +14,40 @@ export interface PendingState {
   createdAt: number;
 }
 
+/**
+ * The five reasons a callback is rejected, as fixed strings.
+ *
+ * Named rather than inlined so that collapsing two of them into one is a
+ * visible edit: distinguishing them in the server log is the whole point of
+ * logging a reason, and an operator telling an expired state from a
+ * cross-provider replay depends on them staying distinct.
+ */
+export const STATE_REJECTION = {
+  unknownState: 'Invalid or missing state token',
+  expired: 'State token has expired',
+  wrongProvider: 'State token was not issued for this provider',
+  missingBinding: 'Missing state binding value',
+  unboundClient: 'State token is not bound to this client',
+} as const;
+
+/**
+ * A callback rejected by `StateStore.consume`.
+ *
+ * Carries two things the route layer cannot otherwise recover: that the
+ * rejection came from state validation rather than from anything downstream of
+ * it, and whether a pending record was actually consumed.
+ */
+export class StateRejection extends Error {
+  /** True when this attempt recognised a pending record and burned it. */
+  consumed: boolean;
+
+  constructor(reason: string, consumed: boolean) {
+    super(reason);
+    this.name = 'StateRejection';
+    this.consumed = consumed;
+  }
+}
+
 export interface IssuedState {
   /** Sent to the provider as the OAuth2 `state` parameter. */
   stateToken: string;
@@ -88,21 +122,56 @@ export default class StateStore {
    * The trade is real: an attacker who already knows a victim's state can burn
    * it, and the victim must restart at `/auth/login/:provider`. That vector is
    * accepted deliberately — it requires the victim's `randomUUID` state, and
-   * it is self-healing on retry.
+   * it is self-healing on retry. `consumed` on the rejection says whether this
+   * call actually burned a record, so a caller can distinguish "nothing of the
+   * victim's was touched" from "one attempt was spent".
+   *
+   * `bindingValues` is every value the client presented under the binding
+   * cookie's name, not just the first — see `anyCandidateMatches`.
    */
-  consume(stateToken: string | undefined, provider: string, bindingValue: string | undefined): void {
-    if (!stateToken) throw new Error('Invalid or missing state token');
+  consume(stateToken: string | undefined, provider: string, bindingValues: readonly string[]): void {
+    if (!stateToken) throw new StateRejection(STATE_REJECTION.unknownState, false);
 
     const record = this.pending.get(stateToken);
-    if (!record) throw new Error('Invalid or missing state token');
+    if (!record) throw new StateRejection(STATE_REJECTION.unknownState, false);
     this.pending.delete(stateToken);
 
-    if (Date.now() - record.createdAt > this.ttl) throw new Error('State token has expired');
-    if (record.provider !== provider) throw new Error('State token was not issued for this provider');
-    if (!bindingValue) throw new Error('Missing state binding value');
+    if (Date.now() - record.createdAt > this.ttl) throw new StateRejection(STATE_REJECTION.expired, true);
+    if (record.provider !== provider) throw new StateRejection(STATE_REJECTION.wrongProvider, true);
 
-    if (!StateStore.digestsMatch(StateStore.hash(bindingValue), record.bindingHash)) {
-      throw new Error('State token is not bound to this client');
+    const candidates = bindingValues.filter(value => value.length > 0);
+    if (candidates.length === 0) throw new StateRejection(STATE_REJECTION.missingBinding, true);
+
+    if (!this.anyCandidateMatches(candidates, record)) {
+      throw new StateRejection(STATE_REJECTION.unboundClient, true);
     }
+  }
+
+  /**
+   * Whether *any* presented value is the binding value for this record.
+   *
+   * Every candidate is tried, and the callback is accepted if one matches.
+   * Returning on the first value carrying the cookie name instead made a
+   * planted cookie a permanent, unauthenticated denial of login: RFC 6265
+   * section 5.4 orders the `Cookie` header by path length then creation time,
+   * so an attacker with content control on a sibling subdomain sets a
+   * same-named cookie once and every subsequent callback for that victim reads
+   * theirs, fails the binding check, and burns the state on the way out. The
+   * victim cannot recover by retrying.
+   *
+   * Accepting any match gives an attacker nothing: they would have to present
+   * the victim's own binding value, which is the property being checked. The
+   * candidate list is bounded by `MAX_BINDING_COOKIE_CANDIDATES` at the point
+   * it is parsed, and the record is consumed on recognition, so a state still
+   * gets exactly one attempt.
+   *
+   * The loop does not short-circuit, so the work is a function of how many
+   * values were presented and not of which one matched.
+   */
+  anyCandidateMatches(candidates: readonly string[], record: PendingState): boolean {
+    return candidates.reduce(
+      (matched, candidate) => StateStore.digestsMatch(StateStore.hash(candidate), record.bindingHash) || matched,
+      false,
+    );
   }
 }

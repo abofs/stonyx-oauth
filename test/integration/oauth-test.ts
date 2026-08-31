@@ -277,6 +277,63 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
     );
   });
 
+  // DEFECT — fails against the pre-fix tree, where the parser returned on the
+  // first name match. This is the cookie-tossing denial: an attacker with
+  // content control on a sibling subdomain sets one same-named cookie on the
+  // parent domain, RFC 6265 section 5.4 sorts it ahead of the real one on equal
+  // paths, and every subsequent callback for that victim reads theirs, fails
+  // the binding check and burns the state. `auth_failed` forever, unrecoverable
+  // by retrying. `Secure`/`HttpOnly`/`SameSite` do not constrain it — the
+  // attacker is writing, not reading.
+  test('#36 a shadow cookie presented ahead of the real binding value does not deny login', async function(assert: Assert) {
+    const clientA = await login();
+    const before = sessionCount();
+
+    const result = await callback({
+      state: clientA.state,
+      cookieHeader: `${STATE_COOKIE_NAME}=planted-by-a-sibling-subdomain; ${clientA.cookieHeader}`,
+    });
+
+    assert.equal(result.error, null, 'the shadow cookie does not reject the callback');
+    assert.ok(result.sessionId, 'the victim still logs in');
+    assert.equal(sessionCount(), before + 1, 'exactly one session was created');
+  });
+
+  // GUARD — passes on current head, and passed before the fix too: it is the
+  // control that makes the DEFECT above mean something. Pre-fix the outcome was
+  // decided purely by which same-named cookie came first, so this leg minted a
+  // session while the leg above did not.
+  test('GUARD #36 a shadow cookie presented after the real binding value does not deny login', async function(assert: Assert) {
+    const clientA = await login();
+    const before = sessionCount();
+
+    const result = await callback({
+      state: clientA.state,
+      cookieHeader: `${clientA.cookieHeader}; ${STATE_COOKIE_NAME}=planted-by-a-sibling-subdomain`,
+    });
+
+    assert.ok(result.sessionId, 'the victim still logs in');
+    assert.equal(sessionCount(), before + 1, 'exactly one session was created');
+  });
+
+  // GUARD — passes on current head. Trying every candidate must not become
+  // "accept anything": a caller who presents only values they made up is still
+  // rejected, however many of them there are.
+  test('GUARD #36 candidates that are all wrong are still rejected', async function(assert: Assert) {
+    const clientA = await login();
+    const before = sessionCount();
+
+    const planted = ['aaa', 'bbb', 'ccc', 'ddd']
+      .map(value => `${STATE_COOKIE_NAME}=${value}`)
+      .join('; ');
+
+    const result = await callback({ state: clientA.state, cookieHeader: planted });
+
+    assert.notOk(result.sessionId, 'redirect carries no sessionId');
+    assert.equal(result.error, 'auth_failed', 'presenting many wrong values is still a rejection');
+    assert.equal(sessionCount(), before, 'no session was created server-side');
+  });
+
   test('#36 a malformed binding cookie is rejected as auth_failed, not a 500', async function(assert: Assert) {
     const clientA = await login();
     const before = sessionCount();

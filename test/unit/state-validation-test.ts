@@ -81,7 +81,7 @@ module('[Unit] State Validation', function(hooks) {
     const oauth = buildOAuth();
     const { url, bindingValue } = oauth.getAuthorizationUrl('mock');
 
-    const session = await oauth.handleCallback('mock', 'code', stateOf(url), bindingValue);
+    const session = await oauth.handleCallback('mock', 'code', stateOf(url), [bindingValue]);
 
     assert.ok(session.sessionId, 'a session is minted for the client that started the flow');
     // `length` counts base64url *characters*, so `>= 32` pinned a 24-byte
@@ -95,7 +95,7 @@ module('[Unit] State Validation', function(hooks) {
     const { url } = oauth.getAuthorizationUrl('mock');
 
     await assert.rejects(
-      oauth.handleCallback('mock', 'code', stateOf(url), undefined),
+      oauth.handleCallback('mock', 'code', stateOf(url), []),
       /binding|state/i,
       'a state alone is not sufficient to mint a session',
     );
@@ -110,7 +110,7 @@ module('[Unit] State Validation', function(hooks) {
     assert.notEqual(clientA.bindingValue, clientB.bindingValue, 'each flow gets its own binding value');
 
     await assert.rejects(
-      oauth.handleCallback('mock', 'code', stateOf(clientA.url), clientB.bindingValue),
+      oauth.handleCallback('mock', 'code', stateOf(clientA.url), [clientB.bindingValue]),
       /binding|state/i,
       "another client's binding value does not unlock this state",
     );
@@ -122,7 +122,7 @@ module('[Unit] State Validation', function(hooks) {
     const { url, bindingValue } = oauth.getAuthorizationUrl('mock');
 
     await assert.rejects(
-      oauth.handleCallback('mock2', 'code', stateOf(url), bindingValue),
+      oauth.handleCallback('mock2', 'code', stateOf(url), [bindingValue]),
       /provider|state/i,
       'state is bound to the provider it was issued for',
     );
@@ -134,7 +134,7 @@ module('[Unit] State Validation', function(hooks) {
     const { bindingValue } = oauth.getAuthorizationUrl('mock');
 
     await assert.rejects(
-      oauth.handleCallback('mock', 'code', 'never-issued', bindingValue),
+      oauth.handleCallback('mock', 'code', 'never-issued', [bindingValue]),
       /Invalid or missing state token/,
     );
   });
@@ -144,11 +144,11 @@ module('[Unit] State Validation', function(hooks) {
     const { bindingValue } = oauth.getAuthorizationUrl('mock');
 
     await assert.rejects(
-      oauth.handleCallback('mock', 'code', '', bindingValue),
+      oauth.handleCallback('mock', 'code', '', [bindingValue]),
       /Invalid or missing state token/,
     );
     await assert.rejects(
-      oauth.handleCallback('mock', 'code', undefined as unknown as string, bindingValue),
+      oauth.handleCallback('mock', 'code', undefined as unknown as string, [bindingValue]),
       /Invalid or missing state token/,
     );
   });
@@ -165,7 +165,7 @@ module('[Unit] State Validation', function(hooks) {
     record.createdAt = Date.now() - 11 * 60 * 1000;
 
     await assert.rejects(
-      oauth.handleCallback('mock', 'code', stateToken, bindingValue),
+      oauth.handleCallback('mock', 'code', stateToken, [bindingValue]),
       /expired/,
     );
     assert.equal(oauth.sessionManager.sessions.size, 0, 'no session was created');
@@ -189,7 +189,7 @@ module('[Unit] State Validation', function(hooks) {
     const record = oauth.stateStore.pending.get(stateToken)!;
     record.createdAt = Date.now() - 9 * 60 * 1000;
 
-    const session = await oauth.handleCallback('mock', 'code', stateToken, bindingValue);
+    const session = await oauth.handleCallback('mock', 'code', stateToken, [bindingValue]);
     assert.ok(session.sessionId, 'a user who reads the consent screen slowly can still log in');
   });
 
@@ -206,10 +206,10 @@ module('[Unit] State Validation', function(hooks) {
     const { url, bindingValue } = oauth.getAuthorizationUrl('mock');
     const stateToken = stateOf(url);
 
-    await oauth.handleCallback('mock', 'code', stateToken, bindingValue);
+    await oauth.handleCallback('mock', 'code', stateToken, [bindingValue]);
 
     await assert.rejects(
-      oauth.handleCallback('mock', 'code', stateToken, bindingValue),
+      oauth.handleCallback('mock', 'code', stateToken, [bindingValue]),
       /Invalid or missing state token/,
       'the same state cannot be used twice',
     );
@@ -223,7 +223,7 @@ module('[Unit] State Validation', function(hooks) {
     const stateToken = stateOf(clientA.url);
 
     await assert.rejects(
-      oauth.handleCallback('mock', 'code', stateToken, clientB.bindingValue),
+      oauth.handleCallback('mock', 'code', stateToken, [clientB.bindingValue]),
       /binding|state/i,
     );
 
@@ -232,7 +232,7 @@ module('[Unit] State Validation', function(hooks) {
     // CSPRNG bytes is infeasible either way — but the reason the callback is
     // never a repeatable oracle of any kind.
     await assert.rejects(
-      oauth.handleCallback('mock', 'code', stateToken, clientA.bindingValue),
+      oauth.handleCallback('mock', 'code', stateToken, [clientA.bindingValue]),
       /Invalid or missing state token/,
       'the state did not survive the failed attempt',
     );
@@ -256,7 +256,7 @@ module('[Unit] State Validation', function(hooks) {
 
     // ...and the stored form alone does not unlock the callback.
     await assert.rejects(
-      oauth.handleCallback('mock', 'code', stateToken, record!.bindingHash),
+      oauth.handleCallback('mock', 'code', stateToken, [record!.bindingHash]),
       /binding|state/i,
       'presenting the stored record value is not sufficient',
     );
@@ -269,7 +269,7 @@ module('[Unit] State Validation', function(hooks) {
 
     assert.true(oauth.stateStore.pending.has(stateToken), 'record exists while in flight');
 
-    await oauth.handleCallback('mock', 'code', stateToken, bindingValue);
+    await oauth.handleCallback('mock', 'code', stateToken, [bindingValue]);
 
     assert.false(oauth.stateStore.pending.has(stateToken), 'record removed once consumed');
   });

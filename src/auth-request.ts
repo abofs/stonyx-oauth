@@ -1,6 +1,7 @@
 import { Request } from '@stonyx/rest-server';
 import log from 'stonyx/log';
 import {
+  MAX_BINDING_COOKIE_CANDIDATES,
   STATE_COOKIE_NAME,
   STATE_COOKIE_PATH,
   STATE_COOKIE_SAME_SITE,
@@ -69,7 +70,7 @@ interface OAuthInstance {
     providerName: string,
     code: string,
     stateToken: string,
-    bindingValue: string | undefined,
+    bindingValues: readonly string[],
   ): Promise<{ sessionId: string; expiresAt: number }>;
   logout(sessionId: string): void;
 }
@@ -156,7 +157,7 @@ export default class AuthRequest extends Request {
         const { provider: providerName } = req.params;
         const { code, state: stateToken, error } = req.query;
 
-        const bindingValue = this.readBindingCookie(req);
+        const bindingValues = this.readBindingCookies(req);
 
         if (error) {
           if (this.oauth.frontendCallbackUrl) {
@@ -177,7 +178,7 @@ export default class AuthRequest extends Request {
         this.clearBindingCookie(req);
 
         try {
-          const session = await this.oauth.handleCallback(providerName, code, stateToken, bindingValue);
+          const session = await this.oauth.handleCallback(providerName, code, stateToken, bindingValues);
 
           if (this.oauth.frontendCallbackUrl) {
             const params = new URLSearchParams({
@@ -350,11 +351,29 @@ export default class AuthRequest extends Request {
     return true;
   }
 
-  readBindingCookie(req: RouteRequest): string | undefined {
+  /**
+   * Every value the client presented under the binding cookie's name.
+   *
+   * Not the first one. A browser sends every applicable cookie in a single
+   * header, and a sibling subdomain can set a same-named cookie on the parent
+   * domain that RFC 6265 section 5.4 orders *ahead* of the real one — so
+   * returning on the first name match handed an attacker a permanent,
+   * unauthenticated denial of login for any victim they could plant a cookie
+   * on. `Secure`, `HttpOnly` and `SameSite` do not constrain that: the attacker
+   * is writing, not reading.
+   *
+   * Bounded at `MAX_BINDING_COOKIE_CANDIDATES`, so the work an unauthenticated
+   * caller can ask for is capped whatever the header contains.
+   */
+  readBindingCookies(req: RouteRequest): string[] {
     const header = req.headers.cookie;
-    if (!header) return undefined;
+    if (!header) return [];
+
+    const values: string[] = [];
 
     for (const part of header.split(';')) {
+      if (values.length >= MAX_BINDING_COOKIE_CANDIDATES) break;
+
       const separator = part.indexOf('=');
       if (separator === -1) continue;
       if (part.slice(0, separator).trim() !== STATE_COOKIE_NAME) continue;
@@ -364,10 +383,10 @@ export default class AuthRequest extends Request {
       // `decodeURIComponent` throws `URIError` on malformed input, which any
       // unauthenticated caller can supply, turning the first line of the
       // callback into a 500 with a stack trace.
-      return part.slice(separator + 1).trim();
+      values.push(part.slice(separator + 1).trim());
     }
 
-    return undefined;
+    return values;
   }
 
   clearBindingCookie(req: RouteRequest): void {

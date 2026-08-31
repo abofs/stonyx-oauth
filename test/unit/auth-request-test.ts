@@ -1,7 +1,7 @@
 import QUnit from 'qunit';
 import log from 'stonyx/log';
 import AuthRequest from '../../src/auth-request.js';
-import { STATE_COOKIE_NAME } from '../../src/constants.js';
+import { MAX_BINDING_COOKIE_CANDIDATES, STATE_COOKIE_NAME } from '../../src/constants.js';
 
 const { module, test } = QUnit;
 
@@ -250,9 +250,9 @@ module('[Unit] AuthRequest binding cookie', function() {
     // Before the fix this raised URIError out of the callback handler, which
     // Express answers with a 500 carrying a full stack trace to an
     // unauthenticated caller.
-    const value = authRequest.readBindingCookie(req);
+    const values = authRequest.readBindingCookies(req);
 
-    assert.equal(value, '%', 'the raw cookie value is returned for the binding check to reject');
+    assert.deepEqual(values, ['%'], 'the raw cookie value is returned for the binding check to reject');
   });
 
   // GUARD — passes on current head. Every committed HTTP test sends exactly one
@@ -263,7 +263,7 @@ module('[Unit] AuthRequest binding cookie', function() {
       cookie: `_ga=GA1.1.9999; sid=abc; ${STATE_COOKIE_NAME}=the-binding-value; theme=dark`,
     });
 
-    assert.equal(authRequest.readBindingCookie(req), 'the-binding-value');
+    assert.deepEqual(authRequest.readBindingCookies(req), ['the-binding-value']);
   });
 
   // GUARD — passes on current head. Pins the `separator === -1` skip branch.
@@ -271,21 +271,62 @@ module('[Unit] AuthRequest binding cookie', function() {
     const authRequest = buildAuthRequest();
     const { req } = buildRequest({ cookie: `flagged; ${STATE_COOKIE_NAME}=the-binding-value` });
 
-    assert.equal(authRequest.readBindingCookie(req), 'the-binding-value');
-    assert.equal(
-      authRequest.readBindingCookie(buildRequest({ cookie: 'flagged' }).req),
-      undefined,
+    assert.deepEqual(authRequest.readBindingCookies(req), ['the-binding-value']);
+    assert.deepEqual(
+      authRequest.readBindingCookies(buildRequest({ cookie: 'flagged' }).req),
+      [],
       'a header with no name=value pair yields no binding value',
     );
 
     // Without the skip, `indexOf('=')` is -1 and `slice(0, -1)` drops the last
     // character — so a *valueless* cookie one character longer than ours parses
     // as a name match and its whole text is handed back as a binding value.
-    assert.equal(
-      authRequest.readBindingCookie(buildRequest({ cookie: `${STATE_COOKIE_NAME}1` }).req),
-      undefined,
+    assert.deepEqual(
+      authRequest.readBindingCookies(buildRequest({ cookie: `${STATE_COOKIE_NAME}1` }).req),
+      [],
       'a longer valueless cookie name is not misread as the binding cookie',
     );
+  });
+
+  // DEFECT — fails against the pre-fix tree, where `readBindingCookie` returned
+  // on the first name match. A browser sends every applicable cookie of that
+  // name in one header, and a sibling subdomain can plant one that RFC 6265
+  // section 5.4 orders ahead of the real one.
+  test('#36 every value carrying the binding cookie name is returned, in header order', function(assert) {
+    const authRequest = buildAuthRequest();
+    const { req } = buildRequest({
+      cookie: `${STATE_COOKIE_NAME}=planted; _ga=GA1.1.9999; ${STATE_COOKIE_NAME}=the-real-value`,
+    });
+
+    assert.deepEqual(
+      authRequest.readBindingCookies(req),
+      ['planted', 'the-real-value'],
+      'a shadow cookie does not hide the one behind it',
+    );
+
+    const { req: reversed } = buildRequest({
+      cookie: `${STATE_COOKIE_NAME}=the-real-value; ${STATE_COOKIE_NAME}=planted`,
+    });
+
+    assert.deepEqual(
+      authRequest.readBindingCookies(reversed),
+      ['the-real-value', 'planted'],
+      'order is preserved rather than decided by the parser',
+    );
+  });
+
+  // GUARD — passes on current head. The candidate list an unauthenticated
+  // caller can ask the binding check to hash is bounded.
+  test('GUARD #36 the binding cookie candidate list is capped', function(assert) {
+    const authRequest = buildAuthRequest();
+    const flood = Array.from({ length: 40 }, (_unused, index) => `${STATE_COOKIE_NAME}=v${index}`).join('; ');
+    const { req } = buildRequest({ cookie: flood });
+
+    const values = authRequest.readBindingCookies(req);
+
+    assert.equal(values.length, 8, 'no more than eight candidates are collected');
+    assert.equal(MAX_BINDING_COOKIE_CANDIDATES, 8, 'and eight is the documented cap');
+    assert.deepEqual(values[0], 'v0', 'the cap truncates the tail, not the head');
   });
 
   test('#36 a rejected callback logs the reason server-side', async function(assert) {
