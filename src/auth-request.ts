@@ -12,6 +12,12 @@ interface AuthorizationRequest {
   bindingValue: string;
 }
 
+/**
+ * Hosts treated as a development origin, and the only ones exempt from
+ * `Secure` on the binding cookie. See `AuthRequest.isSecureContext`.
+ */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
+
 interface OAuthInstance {
   frontendCallbackUrl?: string;
   getSession(sessionId: string): unknown;
@@ -100,10 +106,7 @@ export default class AuthRequest extends Request {
         const { provider: providerName } = req.params;
         const { code, state: stateToken, error } = req.query;
 
-        // The binding value is single-use: whatever the outcome below, this
-        // callback is the end of that cookie's life.
         const bindingValue = this.readBindingCookie(req);
-        this.clearBindingCookie(req);
 
         if (error) {
           if (this.oauth.frontendCallbackUrl) {
@@ -114,6 +117,14 @@ export default class AuthRequest extends Request {
         }
 
         if (!code) return 400;
+
+        // The binding value is single-use, so this callback is the end of that
+        // cookie's life — but only from here down, where the state is actually
+        // consumed. Clearing above the two early returns denied login to a
+        // client still at the provider's consent screen, via an
+        // attacker-induced navigation to `?error=...` that needs no knowledge
+        // of the victim's state at all.
+        this.clearBindingCookie(req);
 
         try {
           const session = await this.oauth.handleCallback(providerName, code, stateToken, bindingValue);
@@ -128,7 +139,15 @@ export default class AuthRequest extends Request {
           }
 
           return session;
-        } catch {
+        } catch (rejection) {
+          // `StateStore.consume` distinguishes five rejection reasons that
+          // otherwise collapse into one opaque outcome with no server-side
+          // signal at all. The client-facing `auth_failed` stays opaque; the
+          // server has no reason to be. The messages are fixed strings, so
+          // nothing caller-controlled reaches the log.
+          const reason = rejection instanceof Error ? rejection.message : String(rejection);
+          log.error(`OAuth: callback rejected — ${reason}`);
+
           if (this.oauth.frontendCallbackUrl) {
             state.redirect = `${this.oauth.frontendCallbackUrl}?error=auth_failed`;
             return;
@@ -152,8 +171,43 @@ export default class AuthRequest extends Request {
       // request and breaks login outright.
       sameSite: STATE_COOKIE_SAME_SITE,
       path: STATE_COOKIE_PATH,
-      secure: req.secure === true,
+      secure: this.isSecureContext(req),
     };
+  }
+
+  /**
+   * Whether the binding cookie is issued with `Secure`.
+   *
+   * Not `req.secure`. Express derives that from the socket unless `trust proxy`
+   * is enabled, and `@stonyx/rest-server` leaves it off by default
+   * (`trustProxy: REST_TRUST_PROXY === 'true'`). In the standard production
+   * topology — TLS terminated at a proxy, plaintext to the origin — `req.secure`
+   * is therefore `false` on every request to an HTTPS site, and the binding
+   * cookie would ship without `Secure` while the deployment looks correct.
+   *
+   * So `Secure` is set unconditionally except on a loopback host. Guessing
+   * wrong there breaks a non-loopback plaintext development setup, which fails
+   * at the first login and is loud. The alternative fails silently, in
+   * production, on the one attribute protecting the value this whole mechanism
+   * is built around.
+   */
+  isSecureContext(req: RouteRequest): boolean {
+    if (req.secure === true) return true;
+
+    const host = req.headers.host;
+    if (!host) return true;
+
+    // `[::1]:2666` -> `::1`; `localhost:2666` -> `localhost`.
+    const hostname = (host.startsWith('[')
+      ? host.slice(1, host.indexOf(']'))
+      : host.split(':')[0]
+    ).toLowerCase();
+
+    if (LOOPBACK_HOSTS.has(hostname)) return false;
+    if (hostname.startsWith('127.')) return false;
+    if (hostname === 'localhost' || hostname.endsWith('.localhost')) return false;
+
+    return true;
   }
 
   setBindingCookie(req: RouteRequest, bindingValue: string): boolean {
@@ -181,7 +235,12 @@ export default class AuthRequest extends Request {
       if (separator === -1) continue;
       if (part.slice(0, separator).trim() !== STATE_COOKIE_NAME) continue;
 
-      return decodeURIComponent(part.slice(separator + 1).trim());
+      // Not decoded. The binding value is base64url, whose alphabet
+      // `encodeURIComponent` never escapes, so a decode buys nothing — and
+      // `decodeURIComponent` throws `URIError` on malformed input, which any
+      // unauthenticated caller can supply, turning the first line of the
+      // callback into a 500 with a stack trace.
+      return part.slice(separator + 1).trim();
     }
 
     return undefined;
