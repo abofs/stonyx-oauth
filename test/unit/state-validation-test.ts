@@ -3,6 +3,7 @@ import OAuth from '../../src/main.js';
 import OAuthFlow from '../../src/oauth-flow.js';
 import TokenManager from '../../src/token-manager.js';
 import SessionManager from '../../src/session-manager.js';
+import StateStore from '../../src/state-store.js';
 import { STATE_TTL_MS } from '../../src/constants.js';
 
 const { module, test } = QUnit;
@@ -13,8 +14,14 @@ const { module, test } = QUnit;
  * These tests drive the real `OAuth` instance from `src/main.ts`. The previous
  * version of this file re-implemented `handleCallback`'s state logic as a local
  * function and tested the copy — measured worthless: deleting the entire
- * production state check failed 0 of its 9 tests. Every test below fails if the
- * validation is removed from `OAuth.handleCallback`.
+ * production state check failed 0 of its 9 tests.
+ *
+ * Measured on this file: deleting the state check from `OAuth.handleCallback`
+ * fails 10 of the 14 tests below. The four survivors are expected to survive
+ * that mutation — the happy-path acceptance test, and the three that pin the
+ * TTL and the expiry-path cleanup rather than the binding check. Re-run the
+ * delete-the-implementation check on any rewrite; do not take this count on
+ * trust after the file changes.
  *
  * No network: the provider stub below overrides every method that would talk to
  * a remote endpoint.
@@ -141,19 +148,52 @@ module('[Unit] State Validation', function(hooks) {
     );
   });
 
-  test('rejects an expired state token', async function(assert) {
+  // The offset is a literal, deliberately. Deriving it from STATE_TTL_MS — as
+  // this test previously did — makes it green for every possible value of the
+  // constant it is testing, including one second.
+  test('rejects a state token older than ten minutes', async function(assert) {
     const oauth = buildOAuth();
     const { url, bindingValue } = oauth.getAuthorizationUrl('mock');
     const stateToken = stateOf(url);
 
     const record = oauth.stateStore.pending.get(stateToken)!;
-    record.createdAt = Date.now() - STATE_TTL_MS - 1000;
+    record.createdAt = Date.now() - 11 * 60 * 1000;
 
     await assert.rejects(
       oauth.handleCallback('mock', 'code', stateToken, bindingValue),
       /expired/,
     );
     assert.equal(oauth.sessionManager.sessions.size, 0, 'no session was created');
+
+    // The expiry path must consume too. If the record survives rejection,
+    // expired entries accumulate permanently in a map an unauthenticated
+    // endpoint fills — #38's defect, made worse, in #38's own file.
+    assert.false(
+      oauth.stateStore.pending.has(stateToken),
+      'an expired record does not survive the callback that rejected it',
+    );
+  });
+
+  // GUARD — passes on current head. The lower bound of the window: without it
+  // the TTL can be cut to a second and every test above stays green.
+  test('GUARD accepts a state token just under ten minutes old', async function(assert) {
+    const oauth = buildOAuth();
+    const { url, bindingValue } = oauth.getAuthorizationUrl('mock');
+    const stateToken = stateOf(url);
+
+    const record = oauth.stateStore.pending.get(stateToken)!;
+    record.createdAt = Date.now() - 9 * 60 * 1000;
+
+    const session = await oauth.handleCallback('mock', 'code', stateToken, bindingValue);
+    assert.ok(session.sessionId, 'a user who reads the consent screen slowly can still log in');
+  });
+
+  // GUARD — passes on current head. The README promises ten minutes and the
+  // binding cookie's Max-Age is derived from this constant, so its magnitude is
+  // consumer-visible and belongs pinned against a literal.
+  test('GUARD the state TTL is ten minutes', function(assert) {
+    assert.equal(STATE_TTL_MS, 600000, 'STATE_TTL_MS is 600000ms');
+    assert.equal(new StateStore().ttl, 600000, 'a default StateStore uses it');
   });
 
   test('a successful callback consumes the state — replay is rejected', async function(assert) {
@@ -182,8 +222,10 @@ module('[Unit] State Validation', function(hooks) {
       /binding|state/i,
     );
 
-    // A failed attempt burns the state, so the binding value cannot be
-    // brute-forced against a state that stays alive for its full lifetime.
+    // A failed attempt burns the state: every state gets exactly one attempt,
+    // whatever the outcome. Not an anti-brute-force measure — guessing 32
+    // CSPRNG bytes is infeasible either way — but the reason the callback is
+    // never a repeatable oracle of any kind.
     await assert.rejects(
       oauth.handleCallback('mock', 'code', stateToken, clientA.bindingValue),
       /Invalid or missing state token/,

@@ -9,7 +9,10 @@ import { setupIntegrationTests } from 'stonyx/test-helpers';
 // observing anything. Session-count assertions must go through the package
 // entry point, which is the instance the HTTP server is actually serving from.
 import OAuth from '@stonyx/oauth';
-import { STATE_COOKIE_NAME } from '@stonyx/oauth/constants';
+// Constants carry no instance state, so the singleton-identity reason for the
+// package specifier above does not extend to them; imported relatively, as
+// production code does, so `./constants` need not be a published export path.
+import { STATE_COOKIE_NAME } from '../../src/constants.js';
 
 const { module, test } = QUnit;
 let endpoint: string;
@@ -125,6 +128,14 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
     // silently break the flow.
     assert.notOk(/SameSite=Strict/i.test(cookie), 'binding cookie is not SameSite=Strict');
     assert.notOk(/SameSite=None/i.test(cookie), 'binding cookie is not SameSite=None');
+    // Written against the literal 600 rather than STATE_TTL_MS: a test that
+    // derives its expectation from the constant it is pinning cannot fail.
+    assert.ok(/;\s*Max-Age=600\b/i.test(cookie), 'binding cookie Max-Age is 600s, matching the state TTL');
+    // GUARD. This suite speaks plaintext HTTP to loopback, which is the one
+    // topology exempt from `Secure`; see test/unit/auth-request-test.ts for the
+    // non-loopback half. Pinned so an unconditional `Secure` cannot land here
+    // and silently stop browsers storing the cookie in local development.
+    assert.notOk(/;\s*Secure/i.test(cookie), 'no Secure attribute over loopback plaintext');
   });
 
   // Assertion 2
@@ -237,6 +248,61 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
       /Expires=Thu, 01 Jan 1970/i.test(cleared ?? '') || /Max-Age=0/i.test(cleared ?? ''),
       'binding cookie is expired at the client'
     );
+  });
+
+  test('#36 a malformed binding cookie is rejected as auth_failed, not a 500', async function(assert: Assert) {
+    const clientA = await login();
+    const before = sessionCount();
+
+    // `%` is invalid percent-encoding. An unauthenticated caller can set this
+    // header directly, and a sibling-subdomain cookie toss can plant it in a
+    // victim's browser, where it sorts ahead of the real cookie.
+    const result = await callback({ state: clientA.state, cookieHeader: `${STATE_COOKIE_NAME}=%` });
+
+    assert.equal(result.status, 302, 'the request is answered by the module, not by the framework error handler');
+    assert.notOk(result.sessionId, 'redirect carries no sessionId');
+    assert.equal(result.error, 'auth_failed', 'a malformed binding cookie is a rejection, not an error');
+    assert.equal(sessionCount(), before, 'no session was created server-side');
+  });
+
+  test('#36 a provider error callback does not clear an in-flight binding cookie', async function(assert: Assert) {
+    const clientA = await login();
+
+    // An attacker-induced top-level navigation, which needs no knowledge of the
+    // victim's state at all. Clearing here would delete the binding cookie of a
+    // client that is still at the provider's consent screen.
+    const response = await fetch(`${endpoint}/auth/callback/mock?error=access_denied`, {
+      redirect: 'manual',
+      headers: cookieHeaders(clientA.cookieHeader),
+    });
+
+    const touched = response.headers.getSetCookie()
+      .find(cookie => cookie.startsWith(`${STATE_COOKIE_NAME}=`));
+
+    assert.equal(response.status, 302, 'the error is still surfaced to the frontend');
+    assert.notOk(touched, 'the error path does not touch the binding cookie');
+
+    // GUARD. `fetch` has no cookie jar, so the client-side deletion cannot be
+    // observed here — only the absence of the deletion header can. This leg
+    // confirms the error path also leaves the pending state alone, so the
+    // interrupted flow is still completable.
+    const result = await callback({ state: clientA.state, cookieHeader: clientA.cookieHeader });
+    assert.ok(result.sessionId, 'the interrupted client can still complete its login');
+  });
+
+  test('#36 a callback with no code does not clear an in-flight binding cookie', async function(assert: Assert) {
+    const clientA = await login();
+
+    const response = await fetch(`${endpoint}/auth/callback/mock?state=${clientA.state}`, {
+      redirect: 'manual',
+      headers: cookieHeaders(clientA.cookieHeader),
+    });
+
+    const touched = response.headers.getSetCookie()
+      .find(cookie => cookie.startsWith(`${STATE_COOKIE_NAME}=`));
+
+    assert.equal(response.status, 400, 'a callback with no code is rejected');
+    assert.notOk(touched, 'the no-code path does not touch the binding cookie');
   });
 
   // ---------------------------------------------------------------------------
