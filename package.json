@@ -17,6 +17,10 @@
       "types": "./dist/main.d.ts",
       "default": "./dist/main.js"
     },
+    "./constants": {
+      "types": "./dist/constants.d.ts",
+      "default": "./dist/constants.js"
+    },
     "./oauth-flow": {
       "types": "./dist/oauth-flow.d.ts",
       "default": "./dist/oauth-flow.js"
