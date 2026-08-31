@@ -209,10 +209,30 @@ export default class AuthRequest extends Request {
           // `StateStore.consume` distinguishes five rejection reasons that
           // otherwise collapse into one opaque outcome with no server-side
           // signal at all. The client-facing `auth_failed` stays opaque; the
-          // server has no reason to be. The messages are fixed strings, so
-          // nothing caller-controlled reaches the log.
-          const reason = rejection instanceof Error ? rejection.message : String(rejection);
-          log.error(`OAuth: callback rejected — ${reason}`);
+          // server has no reason to be.
+          //
+          // Only a `StateRejection`'s message is logged, and those are the
+          // fixed strings in `STATE_REJECTION`. The `try` above spans far more
+          // than `consume` — `getProvider`, `TokenManager.getTokens` ->
+          // `flow.exchangeCode`, `flow.fetchUserInfo`, `flow.normalizeUser`,
+          // `emit('authenticate')`, `sessionManager.create` — and three of
+          // those are consumer-overridable through the documented
+          // `providers.<name>.module` extension point. A provider that puts
+          // request context in its error, which is ordinary practice, would
+          // otherwise land its `clientSecret` and the caller-supplied `code` in
+          // the log verbatim; `@stonyx/logs` appends content raw when
+          // `logToFile` is enabled, so an echoed `code` is also a CRLF
+          // log-forging primitive for an unauthenticated caller. Before this
+          // module logged anything, all of that was swallowed.
+          //
+          // Anything below the state check therefore gets a fixed
+          // discriminator, and the detail is left to whatever the provider
+          // itself logs.
+          if (rejection instanceof StateRejection) {
+            log.error(`OAuth: callback rejected — ${rejection.message}`);
+          } else {
+            log.error('OAuth: callback failed after state validation');
+          }
 
           if (this.oauth.frontendCallbackUrl) {
             state.redirect = `${this.oauth.frontendCallbackUrl}?error=auth_failed`;

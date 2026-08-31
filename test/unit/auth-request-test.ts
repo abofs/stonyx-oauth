@@ -2,6 +2,7 @@ import QUnit from 'qunit';
 import log from 'stonyx/log';
 import AuthRequest from '../../src/auth-request.js';
 import { MAX_BINDING_COOKIE_CANDIDATES, STATE_COOKIE_NAME } from '../../src/constants.js';
+import { StateRejection } from '../../src/state-store.js';
 
 const { module, test } = QUnit;
 
@@ -329,12 +330,11 @@ module('[Unit] AuthRequest binding cookie', function() {
     assert.deepEqual(values[0], 'v0', 'the cap truncates the tail, not the head');
   });
 
-  test('#36 a rejected callback logs the reason server-side', async function(assert) {
+  /** Drives the callback route with a stubbed rejection and captures the log. */
+  async function loggedRejection(thrown: unknown): Promise<string[]> {
     const rejecting = {
       ...stubOAuth,
-      handleCallback: async () => {
-        throw new Error('State token is not bound to this client');
-      },
+      handleCallback: async () => { throw thrown; },
     };
     const authRequest = new AuthRequest(rejecting);
     const { req } = buildRequest();
@@ -350,11 +350,55 @@ module('[Unit] AuthRequest binding cookie', function() {
       log.error = original;
     }
 
+    return logged;
+  }
+
+  test('#36 a rejected callback logs the reason server-side', async function(assert) {
+    const logged = await loggedRejection(
+      new StateRejection('State token is not bound to this client', true),
+    );
+
     assert.equal(logged.length, 1, 'exactly one rejection line is logged');
     assert.ok(
       logged[0].includes('State token is not bound to this client'),
       'the distinguishing reason reaches the server log, not just the opaque auth_failed',
     );
+  });
+
+  // DEFECT — fails against the pre-fix tree, where the `try` spanned the whole
+  // flow and every `Error.message` in it was logged verbatim. Three of the
+  // calls it covers are consumer-overridable through the documented
+  // `providers.<name>.module` extension point, so a provider that puts request
+  // context in its error — ordinary practice — put a `clientSecret` and the
+  // caller-supplied `code` into the log. `@stonyx/logs` appends content raw
+  // when `logToFile` is on, which makes an echoed `code` a CRLF log-forging
+  // primitive too. Before this PR added the log, all of it was swallowed.
+  test('#36 an error thrown below the state check does not reach the log', async function(assert) {
+    const logged = await loggedRejection(
+      new Error(
+        'upstream 400 for code=ATTACKER-SUPPLIED-CODE-CANARY '
+        + 'client_secret=SUPER-SECRET-CANARY-9931\r\nINJECTED-LOG-LINE',
+      ),
+    );
+
+    assert.equal(logged.length, 1, 'exactly one line is logged');
+    assert.equal(
+      logged[0],
+      'OAuth: callback failed after state validation',
+      'a fixed discriminator, with none of the provider error text',
+    );
+    assert.notOk(logged[0].includes('SUPER-SECRET-CANARY-9931'), 'no consumer secret in the log');
+    assert.notOk(logged[0].includes('ATTACKER-SUPPLIED-CODE-CANARY'), 'no caller-supplied code in the log');
+    assert.notOk(/[\r\n]/.test(logged[0]), 'no CRLF reaches the log line');
+  });
+
+  // DEFECT — fails against the pre-fix tree. A thrown non-Error reached the log
+  // through `String(rejection)`, so a provider throwing an object with a
+  // `toString` leaked through the same channel as an `Error.message`.
+  test('#36 a non-Error rejection logs the fixed discriminator', async function(assert) {
+    const logged = await loggedRejection({ toString: () => 'client_secret=LEAKED-VIA-TOSTRING' });
+
+    assert.deepEqual(logged, ['OAuth: callback failed after state validation']);
   });
 
   // GUARD — passes on current head. Pins the `clearCookie` absence branch: the

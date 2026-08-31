@@ -172,7 +172,17 @@ and the route is the fastest way to tell them apart:
 Every callback rejection is logged server-side with its reason
 (`OAuth: callback rejected — ...`), which distinguishes an unknown state, a
 wrong provider, an expired state, a missing binding value and a wrong binding
-value. The client-facing `auth_failed` stays deliberately opaque.
+value. Those five strings are this module's own; nothing caller-controlled
+appears in them. The client-facing `auth_failed` stays deliberately opaque.
+
+A failure thrown **below** the state check — by `getProvider`, by a provider's
+`exchangeCode`, `fetchUserInfo` or `normalizeUser`, by an `authenticate`
+subscriber, or by session creation — logs the fixed line
+`OAuth: callback failed after state validation` and **nothing from the error
+itself**. Custom providers are consumer code, and a provider error that carries
+request context would otherwise put a `clientSecret` or the caller-supplied
+`code` into your logs verbatim. If you need that detail, log it inside your
+provider, where you control what goes in it.
 
 A failed callback **cannot be retried**: the pending record is consumed on any
 callback presenting a recognised `state`, so refreshing the error page or going
