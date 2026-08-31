@@ -1,4 +1,5 @@
 import QUnit from 'qunit';
+import log from 'stonyx/log';
 import AuthRequest from '../../src/auth-request.js';
 import { STATE_COOKIE_NAME } from '../../src/constants.js';
 
@@ -14,15 +15,25 @@ const { module, test } = QUnit;
  * deployment-relevant properties.
  */
 
+/** Mirrors `CookieOptions` in src/auth-request.ts, which is not exported. */
+interface FakeCookieOptions {
+  httpOnly: boolean;
+  sameSite: string;
+  path: string;
+  secure: boolean;
+  maxAge?: number;
+}
+
 interface CookieCall {
   name: string;
   value: string;
-  options: Record<string, unknown>;
+  options: FakeCookieOptions;
 }
 
 interface FakeRequestOptions {
   cookie?: string;
-  host?: string;
+  /** `null` omits the Host header entirely. */
+  host?: string | null;
   secure?: boolean;
   /** Simulates a deployment where `req.res` is not an Express response. */
   withRes?: boolean;
@@ -33,16 +44,19 @@ function buildRequest({ cookie, host = 'api.example.com', secure, withRes = true
   const cleared: CookieCall[] = [];
 
   const res = {
-    cookie(name: string, value: string, options: Record<string, unknown>) {
+    cookie(name: string, value: string, options: FakeCookieOptions) {
       cookies.push({ name, value, options });
     },
-    clearCookie(name: string, options: Record<string, unknown>) {
+    clearCookie(name: string, options: FakeCookieOptions) {
       cleared.push({ name, value: '', options });
     },
   };
 
   const req = {
-    headers: { host, ...(cookie === undefined ? {} : { cookie }) } as Record<string, string | undefined>,
+    headers: {
+      ...(host === null ? {} : { host }),
+      ...(cookie === undefined ? {} : { cookie }),
+    } as Record<string, string | undefined>,
     params: { provider: 'mock' } as Record<string, string>,
     query: {} as Record<string, string>,
     secure,
@@ -121,6 +135,18 @@ module('[Unit] AuthRequest binding cookie', function() {
     }
   });
 
+  test('#36 the binding cookie is Secure when the request carries no Host header', function(assert) {
+    const authRequest = buildAuthRequest();
+    const { req, cookies } = buildRequest({ host: null, secure: false });
+
+    authRequest.handlers.get['/login/:provider'](req, {});
+
+    assert.true(
+      cookies[0].options.secure,
+      'an unattributable origin is not granted the development exemption',
+    );
+  });
+
   test('#36 a malformed percent-encoded binding cookie does not throw', function(assert) {
     const authRequest = buildAuthRequest();
     const { req } = buildRequest({ cookie: `${STATE_COOKIE_NAME}=%` });
@@ -154,6 +180,43 @@ module('[Unit] AuthRequest binding cookie', function() {
       authRequest.readBindingCookie(buildRequest({ cookie: 'flagged' }).req),
       undefined,
       'a header with no name=value pair yields no binding value',
+    );
+
+    // Without the skip, `indexOf('=')` is -1 and `slice(0, -1)` drops the last
+    // character — so a *valueless* cookie one character longer than ours parses
+    // as a name match and its whole text is handed back as a binding value.
+    assert.equal(
+      authRequest.readBindingCookie(buildRequest({ cookie: `${STATE_COOKIE_NAME}1` }).req),
+      undefined,
+      'a longer valueless cookie name is not misread as the binding cookie',
+    );
+  });
+
+  test('#36 a rejected callback logs the reason server-side', async function(assert) {
+    const rejecting = {
+      ...stubOAuth,
+      handleCallback: async () => {
+        throw new Error('State token is not bound to this client');
+      },
+    };
+    const authRequest = new AuthRequest(rejecting);
+    const { req } = buildRequest();
+    req.query = { code: 'a-code', state: 'a-state' };
+
+    const logged: string[] = [];
+    const original = log.error;
+    log.error = (message: string) => { logged.push(message); };
+
+    try {
+      await authRequest.handlers.get['/callback/:provider'](req, {});
+    } finally {
+      log.error = original;
+    }
+
+    assert.equal(logged.length, 1, 'exactly one rejection line is logged');
+    assert.ok(
+      logged[0].includes('State token is not bound to this client'),
+      'the distinguishing reason reaches the server log, not just the opaque auth_failed',
     );
   });
 

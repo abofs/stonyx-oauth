@@ -4,7 +4,7 @@ import OAuthFlow from '../../src/oauth-flow.js';
 import TokenManager from '../../src/token-manager.js';
 import SessionManager from '../../src/session-manager.js';
 import StateStore from '../../src/state-store.js';
-import { STATE_TTL_MS } from '../../src/constants.js';
+import { BINDING_VALUE_BYTES, STATE_TTL_MS } from '../../src/constants.js';
 
 const { module, test } = QUnit;
 
@@ -82,7 +82,10 @@ module('[Unit] State Validation', function(hooks) {
     const session = await oauth.handleCallback('mock', 'code', stateOf(url), bindingValue);
 
     assert.ok(session.sessionId, 'a session is minted for the client that started the flow');
-    assert.ok(bindingValue.length >= 32, 'binding value carries meaningful entropy');
+    // `length` counts base64url *characters*, so `>= 32` pinned a 24-byte
+    // floor, not the 32 bytes the README advertises. 32 bytes is 43 chars.
+    assert.equal(BINDING_VALUE_BYTES, 32, 'the binding value is 32 bytes of CSPRNG output');
+    assert.equal(bindingValue.length, 43, 'and 32 bytes is what actually reaches the client');
   });
 
   test('rejects a callback that presents no binding value', async function(assert) {

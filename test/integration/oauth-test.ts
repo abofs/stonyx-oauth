@@ -209,6 +209,33 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
     assert.equal(sessionCount(), before, 'no session was created server-side');
   });
 
+  // Assertion 5, reverse direction. Without a login+callback that completes
+  // through a provider other than the first configured one, `issue(provider)`
+  // can be hardcoded to `'mock'` and every provider-binding test stays green —
+  // a defect that would manifest for `discord` and never for `mock`.
+  test('#36 a state issued for mock2 completes at the mock2 callback and is rejected at mock', async function(assert: Assert) {
+    const clientB = await login('mock2');
+    const before = sessionCount();
+
+    const crossed = await callback({
+      provider: 'mock',
+      state: clientB.state,
+      cookieHeader: clientB.cookieHeader,
+    });
+    assert.notOk(crossed.sessionId, 'the mock2 state does not mint a session at the mock callback');
+    assert.equal(crossed.error, 'auth_failed', 'reverse-direction replay is rejected');
+    assert.equal(sessionCount(), before, 'no session was created server-side');
+
+    const clientC = await login('mock2');
+    const accepted = await callback({
+      provider: 'mock2',
+      state: clientC.state,
+      cookieHeader: clientC.cookieHeader,
+    });
+    assert.ok(accepted.sessionId, 'a mock2 flow completes end to end at its own callback');
+    assert.equal(sessionCount(), before + 1, 'exactly one session across all four requests');
+  });
+
   // Assertion 6
   test('#36 a consumed state and its binding cookie cannot be replayed', async function(assert: Assert) {
     const clientA = await login();
