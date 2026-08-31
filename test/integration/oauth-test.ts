@@ -117,6 +117,16 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
 
     assert.equal(status, 302, 'login still redirects');
     assert.ok(bindingCookie, `login response carries a ${STATE_COOKIE_NAME} cookie`);
+    // GUARD. Written against the literal name, not `STATE_COOKIE_NAME`: every
+    // other assertion in this suite imports the constant, so the expectation
+    // moves with the value and renaming it was 74/0. The name is part of this
+    // module's documented HTTP contract and a rename breaks every in-flight
+    // login, which is a release note, not a refactor.
+    assert.equal(STATE_COOKIE_NAME, 'stonyx_oauth_state', 'the cookie name is part of the HTTP contract');
+    assert.ok(
+      (bindingCookie ?? '').startsWith('stonyx_oauth_state='),
+      'and it is the name actually sent on the wire',
+    );
 
     const cookie = bindingCookie ?? '';
     assert.ok(/;\s*HttpOnly/i.test(cookie), 'binding cookie is HttpOnly');
@@ -249,8 +259,13 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
     assert.notOk(replay.sessionId, 'replay of state + cookie mints no session');
     assert.equal(replay.error, 'auth_failed', 'replay is rejected');
 
-    // The binding cookie is consumed too: presenting it against a state issued
-    // by a *later* login must not work either.
+    // A binding value only ever unlocks the state it was issued with: presenting
+    // client A's against a state minted by a *later* login fails on the binding
+    // check, not because the cookie was marked used. There is no server-side
+    // record of a spent binding value — the record is keyed by state token and
+    // deleted whole — so this leg pins cross-flow isolation, not consumption.
+    // Consumption is pinned by the replay leg above and by
+    // `a consumed state leaves no pending record behind`.
     const fresh = await login();
     const crossed = await callback({ state: fresh.state, cookieHeader: clientA.cookieHeader });
     assert.notOk(crossed.sessionId, 'consumed cookie against a fresh state mints no session');

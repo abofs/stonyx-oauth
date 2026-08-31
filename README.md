@@ -98,8 +98,11 @@ because `Host` is attacker-controllable from any non-browser client.
 Exempt, and nothing else:
 
 - `localhost` (case-insensitive)
-- any address in `127.0.0.0/8` — a dotted quad of four decimal octets whose
-  first is `127`, so `127.0.0.2` is exempt and `127.evil.com` is not
+- any address in `127.0.0.0/8` — a dotted quad of **four** decimal octets whose
+  first is `127`, so `127.0.0.2` is exempt and `127.evil.com` is not. The
+  resolver shorthands `127.1` and `127.0.0` are *not* exempt: accepting a
+  variable number of octets is how a membership test decays back into a prefix
+  match. Use the full form
 - `::1` (and its expanded form), and the IPv4-mapped loopback spellings
   `::ffff:127.0.0.1` and `::ffff:7f00:1`
 - the wildcard bind addresses `0.0.0.0` and `::`

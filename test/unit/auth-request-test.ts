@@ -108,6 +108,31 @@ module('[Unit] AuthRequest binding cookie', function() {
     assert.equal(state.redirect, undefined, 'no authorization URL is handed to the client');
   });
 
+  // GUARD — passes on current head. Evidenced by mutation: removing the
+  // `log.error` in `setBindingCookie` was 74/0. The `500` is pinned by the
+  // guard above; the operator-facing line that says *why* was not, and it is
+  // the only signal for a framework-wiring failure that produces no exception.
+  test('GUARD #36 the fail-closed login path logs why it refused', function(assert) {
+    const authRequest = buildAuthRequest();
+    const { req } = buildRequest({ withRes: false });
+
+    const logged: string[] = [];
+    const original = log.error;
+    log.error = (message: string) => { logged.push(message); };
+
+    try {
+      authRequest.handlers.get['/login/:provider'](req, {});
+    } finally {
+      log.error = original;
+    }
+
+    assert.deepEqual(
+      logged,
+      ['OAuth: unable to set the state binding cookie; login rejected'],
+      'the README documents this exact line as the first thing to grep for',
+    );
+  });
+
   test('#36 the binding cookie is Secure on a non-loopback host even when Express reports the request as plaintext', function(assert) {
     const authRequest = buildAuthRequest();
 
@@ -186,6 +211,13 @@ module('[Unit] AuthRequest binding cookie', function() {
       // `split(':')[0]` truncates at the first colon, so userinfo defeated it.
       'localhost:80@evil.com',
       '127.0.0.1:80@evil.com',
+      // Not the documented rule. The README says a dotted quad of four decimal
+      // octets; `127.1` and `127.0.0` are resolver shorthands for loopback, but
+      // exempting them would mean the membership test is a length-agnostic
+      // "starts with 127" again. Fail secure and stay inside the documentation.
+      '127.1',
+      '127.0.0',
+      '127',
       // Not a bare host[:port] at all — fail secure rather than guess.
       'localhost, api.example.com',
       'localhost/../api.example.com',
@@ -198,6 +230,37 @@ module('[Unit] AuthRequest binding cookie', function() {
       authRequest.handlers.get['/login/:provider'](req, {});
 
       assert.true(cookies[0].options.secure, `${host} is not granted the development exemption`);
+    }
+  });
+
+  // GUARD — passes on current head. Evidenced by mutation: loosening
+  // `HOSTNAME_PATTERN` to "anything without whitespace" is invisible through
+  // the `secure` boolean, because the membership tests are exact and a
+  // malformed value fails them anyway. It is not invisible here, and the
+  // property being pinned is the one the README states: a `Host` that is not a
+  // well-formed `host[:port]` is *rejected*, not silently reinterpreted. The
+  // rejection is what keeps the exemption decidable as the loopback set grows.
+  test('GUARD #36 the Host parser rejects anything that is not a bare host[:port]', function(assert) {
+    const parse = AuthRequest.parseHostname;
+
+    assert.equal(parse('api.example.com'), 'api.example.com');
+    assert.equal(parse('API.Example.COM:8443'), 'api.example.com', 'port stripped, name lowercased');
+    assert.equal(parse('[::1]:2666'), '::1');
+    assert.equal(parse('[::FFFF:127.0.0.1]'), '::ffff:127.0.0.1');
+
+    for (const malformed of [
+      'localhost:80@evil.com',
+      'localhost:notaport',
+      'localhost:80:90',
+      'localhost, api.example.com',
+      'localhost,api.example.com',
+      'localhost/../api.example.com',
+      'localhost ',
+      '[::1',
+      '[::1]junk',
+      '[not:an:address!]',
+    ]) {
+      assert.equal(parse(malformed), undefined, `${JSON.stringify(malformed)} is not a hostname`);
     }
   });
 
