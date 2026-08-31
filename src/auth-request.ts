@@ -2,7 +2,6 @@ import { Request } from '@stonyx/rest-server';
 import log from 'stonyx/log';
 import { StateRejection } from './state-store.js';
 import {
-  MAX_BINDING_COOKIE_CANDIDATES,
   STATE_COOKIE_NAME,
   STATE_COOKIE_PATH,
   STATE_COOKIE_SAME_SITE,
@@ -397,8 +396,12 @@ export default class AuthRequest extends Request {
    * on. `Secure`, `HttpOnly` and `SameSite` do not constrain that: the attacker
    * is writing, not reading.
    *
-   * Bounded at `MAX_BINDING_COOKIE_CANDIDATES`, so the work an unauthenticated
-   * caller can ask for is capped whatever the header contains.
+   * Every value is returned, with no cap. A cap here does not bound an attack,
+   * it *is* one: truncating the list reinstates exactly the denial above its
+   * own threshold, because the planted cookies are the ones that sort first.
+   * The work is already bounded by Node's 16 KB header limit — at most 779
+   * hashable candidates, 0.32 ms to parse and hash all of them. See
+   * `constants.ts` for the measurement.
    */
   readBindingCookies(req: RouteRequest): string[] {
     const header = req.headers.cookie;
@@ -407,8 +410,6 @@ export default class AuthRequest extends Request {
     const values: string[] = [];
 
     for (const part of header.split(';')) {
-      if (values.length >= MAX_BINDING_COOKIE_CANDIDATES) break;
-
       const separator = part.indexOf('=');
       if (separator === -1) continue;
       if (part.slice(0, separator).trim() !== STATE_COOKIE_NAME) continue;

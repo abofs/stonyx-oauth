@@ -16,16 +16,17 @@ const { module, test } = QUnit;
  * function and tested the copy — measured worthless: deleting the entire
  * production state check failed 0 of its 9 tests.
  *
- * Measured on this file at its current 18 tests: deleting
- * `this.stateStore.consume(...)` from `OAuth.handleCallback` fails 12 of them
- * (93 pass / 0 fail -> 71 pass / 22 fail across the whole suite). Six are
- * expected to survive that mutation, all labelled GUARD except the first:
- * the happy-path acceptance test; the two that pin the TTL magnitude and the
- * lower bound of the window; the two that pin the hash and the state token's
- * shape; and the one that pins multi-candidate acceptance — none of which
- * exercises the check being deleted. Re-run the delete-the-implementation
- * measurement on any rewrite of this file; do not carry this count forward on
- * trust.
+ * Re-measured on this file at its current 21 tests: deleting
+ * `this.stateStore.consume(...)` from `OAuth.handleCallback` fails 13 of them
+ * (106 pass / 0 fail -> 83 pass / 23 fail across the whole suite). Eight are
+ * expected to survive that mutation, all labelled GUARD except the first,
+ * because none of them exercises the check being deleted: the happy-path
+ * acceptance test; the two that pin the TTL magnitude and the lower bound of
+ * the window; the two that pin the hash and the state token's shape; the two
+ * that pin `digestsMatch`'s length precondition and its constant-time read
+ * pattern; and the one that pins multi-candidate acceptance. Re-run the
+ * delete-the-implementation measurement on any rewrite of this file; do not
+ * carry this count forward on trust.
  *
  * No network: the provider stub below overrides every method that would talk to
  * a remote endpoint.
@@ -384,14 +385,140 @@ module('[Unit] State Validation', function(hooks) {
       throw new Error('expected a rejection');
     }
 
+    // All five reasons, not just two. `consumed` is what the route layer uses to
+    // decide whether to clear the binding cookie, so a reason that misreports it
+    // either strands a spent cookie on the client or deletes a live one — and
+    // three of the five had nothing asserting them.
     const untouched = await rejectionFor(() => oauth.handleCallback('mock', 'code', 'never-issued', ['v']));
     assert.false(untouched.consumed, 'an unrecognised state consumed nothing');
+
+    const absent = await rejectionFor(() => oauth.handleCallback('mock', 'code', '', ['v']));
+    assert.false(absent.consumed, 'a missing state token consumed nothing');
+
+    const expiring = oauth.getAuthorizationUrl('mock');
+    const expiringToken = stateOf(expiring.url);
+    oauth.stateStore.pending.get(expiringToken)!.createdAt = Date.now() - 11 * 60 * 1000;
+    const expired = await rejectionFor(
+      () => oauth.handleCallback('mock', 'code', expiringToken, [expiring.bindingValue]),
+    );
+    assert.true(expired.consumed, 'an expired state was recognised, so its record was burned');
+    assert.false(oauth.stateStore.pending.has(expiringToken), 'and the expired record is gone');
+
+    const crossed = oauth.getAuthorizationUrl('mock');
+    const crossedToken = stateOf(crossed.url);
+    const wrongProvider = await rejectionFor(
+      () => oauth.handleCallback('mock2', 'code', crossedToken, [crossed.bindingValue]),
+    );
+    assert.true(wrongProvider.consumed, 'a cross-provider replay was recognised, so its record was burned');
+    assert.false(oauth.stateStore.pending.has(crossedToken), 'and that record is gone too');
+
+    const empty = oauth.getAuthorizationUrl('mock');
+    const emptyToken = stateOf(empty.url);
+    const missing = await rejectionFor(() => oauth.handleCallback('mock', 'code', emptyToken, []));
+    assert.true(missing.consumed, 'a callback with no binding value still burned the record it named');
+    assert.false(oauth.stateStore.pending.has(emptyToken), 'and that record is gone');
 
     const issued = oauth.getAuthorizationUrl('mock');
     const stateToken = stateOf(issued.url);
     const spent = await rejectionFor(() => oauth.handleCallback('mock', 'code', stateToken, ['wrong']));
     assert.true(spent.consumed, 'a recognised state was burned even though the binding failed');
     assert.false(oauth.stateStore.pending.has(stateToken), 'and the record really is gone');
+  });
+
+  // GUARD — passes on current head. Evidenced by mutation: dropping
+  // `if (a.length !== b.length) return false` from `digestsMatch` was 96/0.
+  // It is not defensive dead code. Without it the loop runs to `a.length` and
+  // reads past the end of the shorter operand, where `charCodeAt` yields `NaN`
+  // and `NaN ^ x` is `x` — so a digest that is a strict *prefix* of the stored
+  // one compares equal, and the binding check accepts a value that is not the
+  // binding value. Unreachable while both operands are full-width SHA-256
+  // (they are today), which is exactly why nothing caught its removal; the
+  // comparison is a `static` on an exported class and the next caller need not
+  // hold that invariant.
+  test('GUARD digestsMatch rejects operands of unequal length', function(assert) {
+    const full = StateStore.hash('the-binding-value');
+
+    assert.false(StateStore.digestsMatch(full.slice(0, 32), full), 'a prefix of the stored digest is not a match');
+    assert.false(StateStore.digestsMatch(full, full.slice(0, 32)), 'nor is the stored digest a match for a prefix');
+    assert.false(StateStore.digestsMatch('', full), 'nor is the empty string');
+    assert.true(StateStore.digestsMatch(full, full), 'an equal-length equal digest still matches');
+  });
+
+  // GUARD — passes on current head. Evidenced by mutation: adding
+  // `if (difference !== 0) return false;` inside the loop was 96/0, because a
+  // short-circuiting comparison returns the same answer — it just returns it
+  // sooner, in a time proportional to the length of the matching prefix. That
+  // is the timing oracle the accumulate-then-test shape exists to avoid, and
+  // `digestsMatch`'s own docstring calls it "content-constant-time".
+  //
+  // Pinned by counting reads of the operand rather than by timing (unreliable
+  // at 64 characters) or by inspecting the source (brittle): a comparison that
+  // exits early necessarily stops reading.
+  test('GUARD digestsMatch reads every character whatever the content', function(assert) {
+    function counted(value: string) {
+      const reads = { count: 0 };
+      const probe = {
+        length: value.length,
+        charCodeAt(index: number) {
+          reads.count++;
+          return value.charCodeAt(index);
+        },
+      } as unknown as string;
+
+      return { probe, reads };
+    }
+
+    const stored = StateStore.hash('the-binding-value');
+    const differ = (index: number) => {
+      const chars = [...stored];
+      chars[index] = chars[index] === 'a' ? 'b' : 'a';
+      return chars.join('');
+    };
+
+    // Differs in the very first character — the cheapest possible early exit.
+    const early = counted(differ(0));
+    assert.false(StateStore.digestsMatch(stored, early.probe), 'a first-character mismatch is rejected');
+    assert.equal(early.reads.count, 64, 'and all 64 characters were read even though the first already differed');
+
+    // Differs only in the last — the most expensive. Equal counts is the point.
+    const late = counted(differ(63));
+    assert.false(StateStore.digestsMatch(stored, late.probe), 'a last-character mismatch is rejected');
+    assert.equal(late.reads.count, early.reads.count, 'the same 64 reads — the work does not depend on the content');
+  });
+
+  // GUARD — passes on current head. Evidenced by mutation: `> this.ttl` ->
+  // `>= this.ttl` was 96/0. The existing tests pin "just under ten minutes is
+  // accepted" and "older than ten minutes is rejected" and leave the boundary
+  // itself — age exactly equal to the TTL — unstated, so either behaviour
+  // satisfied them. `Date.now` is frozen rather than raced, so this decides the
+  // boundary instead of sampling near it.
+  test('GUARD a state whose age exactly equals the TTL is still accepted', async function(assert) {
+    const oauth = buildOAuth();
+    const realNow = Date.now;
+
+    try {
+      const frozen = realNow();
+      Date.now = () => frozen;
+
+      const { url, bindingValue } = oauth.getAuthorizationUrl('mock');
+      const stateToken = stateOf(url);
+      oauth.stateStore.pending.get(stateToken)!.createdAt = frozen - STATE_TTL_MS;
+
+      const session = await oauth.handleCallback('mock', 'code', stateToken, [bindingValue]);
+      assert.ok(session.sessionId, 'age === TTL is within the window, not past it');
+
+      const later = oauth.getAuthorizationUrl('mock');
+      const laterToken = stateOf(later.url);
+      oauth.stateStore.pending.get(laterToken)!.createdAt = frozen - STATE_TTL_MS - 1;
+
+      await assert.rejects(
+        oauth.handleCallback('mock', 'code', laterToken, [later.bindingValue]),
+        /expired/i,
+        'and one millisecond past the TTL is not',
+      );
+    } finally {
+      Date.now = realNow;
+    }
   });
 
   // GUARD — passes on current head. Evidenced by mutation: returning on the

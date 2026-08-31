@@ -161,9 +161,11 @@ export default class StateStore {
    *
    * Accepting any match gives an attacker nothing: they would have to present
    * the victim's own binding value, which is the property being checked. The
-   * candidate list is bounded by `MAX_BINDING_COOKIE_CANDIDATES` at the point
-   * it is parsed, and the record is consumed on recognition, so a state still
-   * gets exactly one attempt.
+   * record is consumed on recognition, so a state still gets exactly one
+   * attempt however many candidates were presented, and the candidate count is
+   * bounded by Node's header size limit rather than by a cap here — a cap
+   * truncates the list from the wrong end and reinstates the denial this method
+   * exists to close. See `constants.ts`.
    *
    * The loop does not short-circuit, so the work is a function of how many
    * values were presented and not of which one matched.

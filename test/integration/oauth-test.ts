@@ -390,6 +390,36 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
     assert.equal(sessionCount(), before + 1, 'exactly one session was created');
   });
 
+  // DEFECT — fails against the tree that capped the candidate list at 8. The
+  // cap did not close the cookie-tossing denial above, it *raised its price*:
+  // measured over real HTTP on that tree, 7 planted cookies still minted a
+  // session and 8 produced `auth_failed` permanently — the pre-fix outcome, for
+  // an attacker willing to plant one more cookie. The count is reachable rather
+  // than theoretical: RFC 6265 section 5.4 orders by path length then creation
+  // time, so a 4-label API host with a foothold beneath it has 3 settable
+  // parent domains x 3 usable paths = 9 slots ahead of the real cookie.
+  //
+  // The cap was removed rather than raised. What it was said to bound is
+  // already bounded by Node's 16 KB header limit: at most 779 hashable
+  // candidates, 0.32 ms to parse and hash all of them. See `constants.ts`.
+  test('#36 a flood of shadow cookies past any cap does not deny login', async function(assert: Assert) {
+    // 7 and 8 straddle the withdrawn cap, 9 is the reachable count, 40 is well past.
+    for (const shadows of [7, 8, 9, 40]) {
+      const victim = await login();
+      const before = sessionCount();
+
+      const planted = Array.from({ length: shadows }, (_unused, index) => `${STATE_COOKIE_NAME}=planted${index}`);
+      const result = await callback({
+        state: victim.state,
+        cookieHeader: [...planted, victim.cookieHeader].join('; '),
+      });
+
+      assert.equal(result.error, null, `${shadows} planted cookies do not reject the callback`);
+      assert.ok(result.sessionId, `the victim still logs in behind ${shadows} planted cookies`);
+      assert.equal(sessionCount(), before + 1, 'exactly one session was created');
+    }
+  });
+
   // GUARD — passes on current head. Trying every candidate must not become
   // "accept anything": a caller who presents only values they made up is still
   // rejected, however many of them there are.

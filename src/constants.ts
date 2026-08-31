@@ -19,14 +19,28 @@ export const STATE_TTL_MS = 10 * 60 * 1000;
 export const BINDING_VALUE_BYTES = 32;
 
 /**
- * Most values carrying `STATE_COOKIE_NAME` that a single callback will try.
+ * There is deliberately no cap on how many values carrying `STATE_COOKIE_NAME`
+ * a callback will try.
  *
- * A client can hold more than one cookie of the same name — a sibling
- * subdomain can set one on the parent domain, and the browser sends every
- * applicable cookie in one header. All of them are tried, so a planted cookie
- * cannot deny login by sorting ahead of the real one; the cap bounds the work
- * an unauthenticated caller can ask for. It is not a brute-force control: the
- * pending record is consumed on recognition, so a state gets one attempt
- * whatever the cap.
+ * A client can hold more than one cookie of the same name — a sibling subdomain
+ * can set one on the parent domain — and the browser sends every applicable
+ * cookie in one header, so all of them must be tried or a planted cookie denies
+ * login by sorting ahead of the real one (RFC 6265 section 5.4).
+ *
+ * A cap of 8 was tried and withdrawn: it *reinstated* that denial above its own
+ * threshold. Measured on the pre-change tree, 7 shadow cookies still minted a
+ * session and 8 failed permanently — the same outcome as the original defect,
+ * with the attacker's cost raised from one planted cookie to eight. That is
+ * reachable: RFC 6265 section 5.4 orders by path length then creation time, so
+ * a 4-label API host with a foothold beneath it gets 3 settable parent domains
+ * x 3 usable paths = 9 candidates ahead of the real one.
+ *
+ * What the cap was defending is already bounded, structurally and for free.
+ * Node caps the whole header block at `http.maxHeaderSize`, 16 KB by default,
+ * and the shortest segment that can reach the hash is `stonyx_oauth_state=x` at
+ * 20 bytes, so a request cannot present more than 779 hashable candidates.
+ * Parsing and SHA-256-hashing all 779 costs 0.32 ms median / 0.81 ms worst of 9
+ * runs (Node 24.13.0, Apple silicon). Paying a permanent, unauthenticated
+ * denial of login to avoid a third of a millisecond is the wrong trade, so the
+ * bound is left where it already was: the header size limit.
  */
-export const MAX_BINDING_COOKIE_CANDIDATES = 8;
