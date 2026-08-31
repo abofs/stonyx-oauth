@@ -16,12 +16,14 @@ const { module, test } = QUnit;
  * function and tested the copy — measured worthless: deleting the entire
  * production state check failed 0 of its 9 tests.
  *
- * Measured on this file: deleting the state check from `OAuth.handleCallback`
- * fails 10 of the 14 tests below. The four survivors are expected to survive
- * that mutation — the happy-path acceptance test, and the three that pin the
- * TTL and the expiry-path cleanup rather than the binding check. Re-run the
- * delete-the-implementation check on any rewrite; do not take this count on
- * trust after the file changes.
+ * Measured on this file at its current 13 tests: deleting
+ * `this.stateStore.consume(...)` from `OAuth.handleCallback` fails 10 of them
+ * (74 pass / 0 fail -> 56 pass / 18 fail across the whole suite). Three are
+ * expected to survive that mutation and are labelled GUARD or noted here —
+ * the happy-path acceptance test, and the two that pin the TTL magnitude and
+ * the lower bound of the window, neither of which exercises the check being
+ * deleted. Re-run the delete-the-implementation measurement on any rewrite of
+ * this file; do not carry this count forward on trust.
  *
  * No network: the provider stub below overrides every method that would talk to
  * a remote endpoint.
