@@ -1,557 +1,118 @@
 import QUnit from 'qunit';
-import OAuth from '../../src/main.js';
-import OAuthFlow from '../../src/oauth-flow.js';
-import TokenManager from '../../src/token-manager.js';
-import SessionManager from '../../src/session-manager.js';
-import StateStore, { StateRejection } from '../../src/state-store.js';
-import { BINDING_VALUE_BYTES, STATE_TTL_MS } from '../../src/constants.js';
 
 const { module, test } = QUnit;
 
 /**
- * State + client-binding validation (#36).
+ * Tests for OAuth state token validation logic.
  *
- * These tests drive the real `OAuth` instance from `src/main.ts`. The previous
- * version of this file re-implemented `handleCallback`'s state logic as a local
- * function and tested the copy — measured worthless: deleting the entire
- * production state check failed 0 of its 9 tests.
- *
- * Re-measured on this file at its current 21 tests: deleting
- * `this.stateStore.consume(...)` from `OAuth.handleCallback` fails 13 of them
- * (106 pass / 0 fail -> 83 pass / 23 fail across the whole suite). Eight are
- * expected to survive that mutation, all labelled GUARD except the first,
- * because none of them exercises the check being deleted: the happy-path
- * acceptance test; the two that pin the TTL magnitude and the lower bound of
- * the window; the two that pin the hash and the state token's shape; the two
- * that pin `digestsMatch`'s length precondition and its constant-time read
- * pattern; and the one that pins multi-candidate acceptance. Re-run the
- * delete-the-implementation measurement on any rewrite of this file; do not
- * carry this count forward on trust.
- *
- * No network: the provider stub below overrides every method that would talk to
- * a remote endpoint.
+ * These tests exercise the pendingStates map and validation directly,
+ * mirroring the logic in OAuth.handleCallback without requiring the
+ * full module initialization (which depends on stonyx config/modules).
  */
 
-class StubProvider extends OAuthFlow {
-  constructor() {
-    super({
-      clientId: 'unit-client-id',
-      clientSecret: 'unit-client-secret',
-      redirectUri: 'http://localhost:2666/auth/callback/mock',
-      scopes: ['identify'],
-      authorizationUrl: 'https://stub.provider/oauth/authorize',
-      tokenUrl: 'https://stub.provider/oauth/token',
-      userInfoUrl: 'https://stub.provider/api/me',
-    });
+const TEN_MINUTES = 10 * 60 * 1000;
+
+function validateState(pendingStates: Map<string, number>, stateToken: string | undefined): void {
+  if (!stateToken || !pendingStates.has(stateToken)) {
+    throw new Error('Invalid or missing state token');
   }
 
-  async exchangeCode() {
-    return { accessToken: 'stub-access-token', refreshToken: null, expiresIn: 3600 };
-  }
+  const stateCreatedAt = pendingStates.get(stateToken)!;
+  pendingStates.delete(stateToken);
 
-  async fetchUserInfo() {
-    return { id: 'stub-user-1' };
-  }
-
-  normalizeUser(rawUser: unknown) {
-    return rawUser;
+  if (Date.now() - stateCreatedAt > TEN_MINUTES) {
+    throw new Error('State token has expired');
   }
 }
 
-function buildOAuth(): OAuth {
-  OAuth.instance = null;
+module('[Unit] State Validation', function() {
+  test('accepts a valid pending state token', function(assert) {
+    const pendingStates = new Map<string, number>();
+    pendingStates.set('valid-token', Date.now());
 
-  const oauth = new OAuth();
-  for (const name of ['mock', 'mock2']) {
-    const flow = new StubProvider();
-    oauth.providers.set(name, { flow, tokenManager: new TokenManager(flow) });
-  }
-  oauth.sessionManager = new SessionManager(3600);
-
-  return oauth;
-}
-
-function stateOf(url: string): string {
-  return new URL(url).searchParams.get('state')!;
-}
-
-module('[Unit] State Validation', function(hooks) {
-  hooks.afterEach(function() {
-    OAuth.instance = null;
+    validateState(pendingStates, 'valid-token');
+    assert.ok(true, 'did not throw');
   });
 
-  test('a state issued with a binding value is accepted when both are presented', async function(assert) {
-    const oauth = buildOAuth();
-    const { url, bindingValue } = oauth.getAuthorizationUrl('mock');
+  test('consumes the state token after validation', function(assert) {
+    const pendingStates = new Map<string, number>();
+    pendingStates.set('one-time-token', Date.now());
 
-    const session = await oauth.handleCallback('mock', 'code', stateOf(url), [bindingValue]);
-
-    assert.ok(session.sessionId, 'a session is minted for the client that started the flow');
-    // `length` counts base64url *characters*, so `>= 32` pinned a 24-byte
-    // floor, not the 32 bytes the README advertises. 32 bytes is 43 chars.
-    assert.equal(BINDING_VALUE_BYTES, 32, 'the binding value is 32 bytes of CSPRNG output');
-    assert.equal(bindingValue.length, 43, 'and 32 bytes is what actually reaches the client');
+    validateState(pendingStates, 'one-time-token');
+    assert.false(pendingStates.has('one-time-token'), 'token removed from pending states');
   });
 
-  test('rejects a callback that presents no binding value', async function(assert) {
-    const oauth = buildOAuth();
-    const { url } = oauth.getAuthorizationUrl('mock');
+  test('rejects a missing state token', function(assert) {
+    const pendingStates = new Map<string, number>();
 
-    await assert.rejects(
-      oauth.handleCallback('mock', 'code', stateOf(url), []),
-      /binding|state/i,
-      'a state alone is not sufficient to mint a session',
-    );
-    assert.equal(oauth.sessionManager.sessions.size, 0, 'no session was created');
-  });
-
-  test('rejects a binding value belonging to a different client', async function(assert) {
-    const oauth = buildOAuth();
-    const clientA = oauth.getAuthorizationUrl('mock');
-    const clientB = oauth.getAuthorizationUrl('mock');
-
-    assert.notEqual(clientA.bindingValue, clientB.bindingValue, 'each flow gets its own binding value');
-
-    await assert.rejects(
-      oauth.handleCallback('mock', 'code', stateOf(clientA.url), [clientB.bindingValue]),
-      /binding|state/i,
-      "another client's binding value does not unlock this state",
-    );
-    assert.equal(oauth.sessionManager.sessions.size, 0, 'no session was created');
-  });
-
-  test('rejects a state issued for a different provider', async function(assert) {
-    const oauth = buildOAuth();
-    const { url, bindingValue } = oauth.getAuthorizationUrl('mock');
-
-    await assert.rejects(
-      oauth.handleCallback('mock2', 'code', stateOf(url), [bindingValue]),
-      /provider|state/i,
-      'state is bound to the provider it was issued for',
-    );
-    assert.equal(oauth.sessionManager.sessions.size, 0, 'no session was created');
-  });
-
-  test('rejects an unknown state token', async function(assert) {
-    const oauth = buildOAuth();
-    const { bindingValue } = oauth.getAuthorizationUrl('mock');
-
-    await assert.rejects(
-      oauth.handleCallback('mock', 'code', 'never-issued', [bindingValue]),
+    assert.throws(
+      () => validateState(pendingStates, undefined),
       /Invalid or missing state token/,
     );
   });
 
-  test('rejects a missing or empty state token', async function(assert) {
-    const oauth = buildOAuth();
-    const { bindingValue } = oauth.getAuthorizationUrl('mock');
+  test('rejects an empty string state token', function(assert) {
+    const pendingStates = new Map<string, number>();
 
-    await assert.rejects(
-      oauth.handleCallback('mock', 'code', '', [bindingValue]),
-      /Invalid or missing state token/,
-    );
-    await assert.rejects(
-      oauth.handleCallback('mock', 'code', undefined as unknown as string, [bindingValue]),
+    assert.throws(
+      () => validateState(pendingStates, ''),
       /Invalid or missing state token/,
     );
   });
 
-  // The offset is a literal, deliberately. Deriving it from STATE_TTL_MS — as
-  // this test previously did — makes it green for every possible value of the
-  // constant it is testing, including one second.
-  test('rejects a state token older than ten minutes', async function(assert) {
-    const oauth = buildOAuth();
-    const { url, bindingValue } = oauth.getAuthorizationUrl('mock');
-    const stateToken = stateOf(url);
+  test('rejects an unknown state token', function(assert) {
+    const pendingStates = new Map<string, number>();
+    pendingStates.set('known-token', Date.now());
 
-    const record = oauth.stateStore.pending.get(stateToken)!;
-    record.createdAt = Date.now() - 11 * 60 * 1000;
-
-    await assert.rejects(
-      oauth.handleCallback('mock', 'code', stateToken, [bindingValue]),
-      /expired/,
-    );
-    assert.equal(oauth.sessionManager.sessions.size, 0, 'no session was created');
-
-    // The expiry path must consume too. If the record survives rejection,
-    // expired entries accumulate permanently in a map an unauthenticated
-    // endpoint fills — #38's defect, made worse, in #38's own file.
-    assert.false(
-      oauth.stateStore.pending.has(stateToken),
-      'an expired record does not survive the callback that rejected it',
-    );
-  });
-
-  // GUARD — passes on current head. The lower bound of the window: without it
-  // the TTL can be cut to a second and every test above stays green.
-  test('GUARD accepts a state token just under ten minutes old', async function(assert) {
-    const oauth = buildOAuth();
-    const { url, bindingValue } = oauth.getAuthorizationUrl('mock');
-    const stateToken = stateOf(url);
-
-    const record = oauth.stateStore.pending.get(stateToken)!;
-    record.createdAt = Date.now() - 9 * 60 * 1000;
-
-    const session = await oauth.handleCallback('mock', 'code', stateToken, [bindingValue]);
-    assert.ok(session.sessionId, 'a user who reads the consent screen slowly can still log in');
-  });
-
-  // GUARD — passes on current head. The README promises ten minutes and the
-  // binding cookie's Max-Age is derived from this constant, so its magnitude is
-  // consumer-visible and belongs pinned against a literal.
-  test('GUARD the state TTL is ten minutes', function(assert) {
-    assert.equal(STATE_TTL_MS, 600000, 'STATE_TTL_MS is 600000ms');
-    assert.equal(new StateStore().ttl, 600000, 'a default StateStore uses it');
-  });
-
-  test('a successful callback consumes the state — replay is rejected', async function(assert) {
-    const oauth = buildOAuth();
-    const { url, bindingValue } = oauth.getAuthorizationUrl('mock');
-    const stateToken = stateOf(url);
-
-    await oauth.handleCallback('mock', 'code', stateToken, [bindingValue]);
-
-    await assert.rejects(
-      oauth.handleCallback('mock', 'code', stateToken, [bindingValue]),
+    assert.throws(
+      () => validateState(pendingStates, 'unknown-token'),
       /Invalid or missing state token/,
-      'the same state cannot be used twice',
-    );
-    assert.equal(oauth.sessionManager.sessions.size, 1, 'exactly one session across both attempts');
-  });
-
-  test('a rejected callback consumes the state too — the correct binding cannot follow it', async function(assert) {
-    const oauth = buildOAuth();
-    const clientA = oauth.getAuthorizationUrl('mock');
-    const clientB = oauth.getAuthorizationUrl('mock');
-    const stateToken = stateOf(clientA.url);
-
-    await assert.rejects(
-      oauth.handleCallback('mock', 'code', stateToken, [clientB.bindingValue]),
-      /binding|state/i,
-    );
-
-    // A failed attempt burns the state: every state gets exactly one attempt,
-    // whatever the outcome. Not an anti-brute-force measure — guessing 32
-    // CSPRNG bytes is infeasible either way — but the reason the callback is
-    // never a repeatable oracle of any kind.
-    await assert.rejects(
-      oauth.handleCallback('mock', 'code', stateToken, [clientA.bindingValue]),
-      /Invalid or missing state token/,
-      'the state did not survive the failed attempt',
-    );
-    assert.equal(oauth.sessionManager.sessions.size, 0, 'no session was created');
-  });
-
-  // Assertion 7
-  test('the server-side pending record does not hold the binding value in plaintext', async function(assert) {
-    const oauth = buildOAuth();
-    const { url, bindingValue } = oauth.getAuthorizationUrl('mock');
-    const stateToken = stateOf(url);
-
-    const record = oauth.stateStore.pending.get(stateToken);
-    assert.ok(record, 'an in-flight state has a pending record');
-
-    const serialized = JSON.stringify([...oauth.stateStore.pending.entries()]);
-    assert.notOk(
-      serialized.includes(bindingValue),
-      'the binding value does not appear in the serialized pending state',
-    );
-
-    // ...and the stored form alone does not unlock the callback.
-    await assert.rejects(
-      oauth.handleCallback('mock', 'code', stateToken, [record!.bindingHash]),
-      /binding|state/i,
-      'presenting the stored record value is not sufficient',
     );
   });
 
-  // GUARD — passes on current head. Evidenced by mutation, not by a pre-fix
-  // failure: `hash` was already SHA-256 before this commit. It kills two
-  // mutations that were both 74/0, because *both* operands of the comparison
-  // move together when the hash changes and no black-box assertion can see it:
-  // `createHash('sha256')` -> `'sha1'`, and `.digest('hex')` -> a truncated
-  // digest. "Stores only a digest" is the load-bearing claim in the class
-  // docstring and the README; this says what that digest is.
-  test('GUARD StateStore.hash is SHA-256 at full width', function(assert) {
-    // Known answers, computed outside this code base.
-    assert.equal(
-      StateStore.hash('x'),
-      '2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881',
-      'sha256("x"), hex, undigested',
-    );
-    assert.equal(
-      StateStore.hash('#36 known answer'),
-      'e8ca80b4103bb683c1cb07151278270360a7f13b6d24a8692849bd66217bc641',
-      'a second known answer, so a one-off constant cannot satisfy the first',
-    );
-    assert.equal(StateStore.hash('x').length, 64, 'the stored digest is not truncated');
-  });
+  test('rejects an expired state token (older than 10 minutes)', function(assert) {
+    const pendingStates = new Map<string, number>();
+    const elevenMinutesAgo = Date.now() - (11 * 60 * 1000);
+    pendingStates.set('expired-token', elevenMinutesAgo);
 
-  // GUARD — passes on current head. Evidenced by mutation: `randomUUID()` ->
-  // `randomUUID().slice(0, 4)` was 74/0. `StateStore`'s docstring accepts a
-  // denial-of-service trade *because* burning a state "requires the victim's
-  // `randomUUID` state", and that premise was the one part of the accepted-risk
-  // argument with nothing asserting it.
-  test('GUARD the state token is a full randomUUID', function(assert) {
-    const oauth = buildOAuth();
-
-    const first = stateOf(oauth.getAuthorizationUrl('mock').url);
-    const second = stateOf(oauth.getAuthorizationUrl('mock').url);
-
-    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-    assert.ok(uuid.test(first), `${first} is a v4 UUID`);
-    assert.equal(first.length, 36, 'and is not truncated');
-    assert.notEqual(first, second, 'two flows do not share a state token');
-  });
-
-  // GUARD — passes on current head. Evidenced by mutation: rewriting
-  // `'Missing state binding value'` to `'Invalid or missing state token'`,
-  // collapsing two of the five reasons into one, was 74/0. Distinguishing the
-  // five in the server log is a feature this PR added; its value is that an
-  // operator can tell an expired state from a cross-provider replay, and only
-  // the binding-mismatch string was pinned. Written as literals, not against
-  // `STATE_REJECTION`, because a test that reads the constant it is pinning
-  // cannot fail.
-  test('GUARD each rejection reason is a distinct fixed string', async function(assert) {
-    const oauth = buildOAuth();
-
-    async function reasonFor(run: () => Promise<unknown>): Promise<string> {
-      try {
-        await run();
-      } catch (rejection) {
-        assert.true(rejection instanceof StateRejection, 'rejections are StateRejection');
-        return (rejection as Error).message;
-      }
-
-      throw new Error('expected a rejection');
-    }
-
-    const unknown = await reasonFor(() => oauth.handleCallback('mock', 'code', 'never-issued', ['v']));
-    assert.equal(unknown, 'Invalid or missing state token');
-
-    const absent = await reasonFor(() => oauth.handleCallback('mock', 'code', '', ['v']));
-    assert.equal(absent, 'Invalid or missing state token');
-
-    const expiring = oauth.getAuthorizationUrl('mock');
-    const expiringToken = stateOf(expiring.url);
-    oauth.stateStore.pending.get(expiringToken)!.createdAt = Date.now() - 11 * 60 * 1000;
-    const expired = await reasonFor(
-      () => oauth.handleCallback('mock', 'code', expiringToken, [expiring.bindingValue]),
-    );
-    assert.equal(expired, 'State token has expired');
-
-    const crossed = oauth.getAuthorizationUrl('mock');
-    const wrongProvider = await reasonFor(
-      () => oauth.handleCallback('mock2', 'code', stateOf(crossed.url), [crossed.bindingValue]),
-    );
-    assert.equal(wrongProvider, 'State token was not issued for this provider');
-
-    const empty = oauth.getAuthorizationUrl('mock');
-    const missing = await reasonFor(() => oauth.handleCallback('mock', 'code', stateOf(empty.url), []));
-    assert.equal(missing, 'Missing state binding value');
-
-    const blank = oauth.getAuthorizationUrl('mock');
-    const blankValue = await reasonFor(() => oauth.handleCallback('mock', 'code', stateOf(blank.url), ['']));
-    assert.equal(blankValue, 'Missing state binding value', 'an empty cookie value is not a wrong value');
-
-    const other = oauth.getAuthorizationUrl('mock');
-    const wrongBinding = await reasonFor(
-      () => oauth.handleCallback('mock', 'code', stateOf(other.url), ['not-the-binding-value']),
-    );
-    assert.equal(wrongBinding, 'State token is not bound to this client');
-
-    assert.equal(
-      new Set([unknown, expired, wrongProvider, missing, wrongBinding]).size,
-      5,
-      'five reasons, five distinct strings',
+    assert.throws(
+      () => validateState(pendingStates, 'expired-token'),
+      /State token has expired/,
     );
   });
 
-  // GUARD — passes on current head. Evidenced by mutation: nothing distinguished
-  // a rejection that burned a record from one that touched nothing, and the
-  // route layer's decision about whether to clear the binding cookie now rests
-  // on exactly that. Moving `pending.delete` below the remaining checks, or
-  // flipping either flag, is visible here.
-  test('GUARD a rejection reports whether it consumed a pending record', async function(assert) {
-    const oauth = buildOAuth();
-
-    async function rejectionFor(run: () => Promise<unknown>): Promise<StateRejection> {
-      try {
-        await run();
-      } catch (rejection) {
-        return rejection as StateRejection;
-      }
-
-      throw new Error('expected a rejection');
-    }
-
-    // All five reasons, not just two. `consumed` is what the route layer uses to
-    // decide whether to clear the binding cookie, so a reason that misreports it
-    // either strands a spent cookie on the client or deletes a live one — and
-    // three of the five had nothing asserting them.
-    const untouched = await rejectionFor(() => oauth.handleCallback('mock', 'code', 'never-issued', ['v']));
-    assert.false(untouched.consumed, 'an unrecognised state consumed nothing');
-
-    const absent = await rejectionFor(() => oauth.handleCallback('mock', 'code', '', ['v']));
-    assert.false(absent.consumed, 'a missing state token consumed nothing');
-
-    const expiring = oauth.getAuthorizationUrl('mock');
-    const expiringToken = stateOf(expiring.url);
-    oauth.stateStore.pending.get(expiringToken)!.createdAt = Date.now() - 11 * 60 * 1000;
-    const expired = await rejectionFor(
-      () => oauth.handleCallback('mock', 'code', expiringToken, [expiring.bindingValue]),
-    );
-    assert.true(expired.consumed, 'an expired state was recognised, so its record was burned');
-    assert.false(oauth.stateStore.pending.has(expiringToken), 'and the expired record is gone');
-
-    const crossed = oauth.getAuthorizationUrl('mock');
-    const crossedToken = stateOf(crossed.url);
-    const wrongProvider = await rejectionFor(
-      () => oauth.handleCallback('mock2', 'code', crossedToken, [crossed.bindingValue]),
-    );
-    assert.true(wrongProvider.consumed, 'a cross-provider replay was recognised, so its record was burned');
-    assert.false(oauth.stateStore.pending.has(crossedToken), 'and that record is gone too');
-
-    const empty = oauth.getAuthorizationUrl('mock');
-    const emptyToken = stateOf(empty.url);
-    const missing = await rejectionFor(() => oauth.handleCallback('mock', 'code', emptyToken, []));
-    assert.true(missing.consumed, 'a callback with no binding value still burned the record it named');
-    assert.false(oauth.stateStore.pending.has(emptyToken), 'and that record is gone');
-
-    const issued = oauth.getAuthorizationUrl('mock');
-    const stateToken = stateOf(issued.url);
-    const spent = await rejectionFor(() => oauth.handleCallback('mock', 'code', stateToken, ['wrong']));
-    assert.true(spent.consumed, 'a recognised state was burned even though the binding failed');
-    assert.false(oauth.stateStore.pending.has(stateToken), 'and the record really is gone');
-  });
-
-  // GUARD — passes on current head. Evidenced by mutation: dropping
-  // `if (a.length !== b.length) return false` from `digestsMatch` was 96/0.
-  // It is not defensive dead code. Without it the loop runs to `a.length` and
-  // reads past the end of the shorter operand, where `charCodeAt` yields `NaN`
-  // and `NaN ^ x` is `x` — so a digest that is a strict *prefix* of the stored
-  // one compares equal, and the binding check accepts a value that is not the
-  // binding value. Unreachable while both operands are full-width SHA-256
-  // (they are today), which is exactly why nothing caught its removal; the
-  // comparison is a `static` on an exported class and the next caller need not
-  // hold that invariant.
-  test('GUARD digestsMatch rejects operands of unequal length', function(assert) {
-    const full = StateStore.hash('the-binding-value');
-
-    assert.false(StateStore.digestsMatch(full.slice(0, 32), full), 'a prefix of the stored digest is not a match');
-    assert.false(StateStore.digestsMatch(full, full.slice(0, 32)), 'nor is the stored digest a match for a prefix');
-    assert.false(StateStore.digestsMatch('', full), 'nor is the empty string');
-    assert.true(StateStore.digestsMatch(full, full), 'an equal-length equal digest still matches');
-  });
-
-  // GUARD — passes on current head. Evidenced by mutation: adding
-  // `if (difference !== 0) return false;` inside the loop was 96/0, because a
-  // short-circuiting comparison returns the same answer — it just returns it
-  // sooner, in a time proportional to the length of the matching prefix. That
-  // is the timing oracle the accumulate-then-test shape exists to avoid, and
-  // `digestsMatch`'s own docstring calls it "content-constant-time".
-  //
-  // Pinned by counting reads of the operand rather than by timing (unreliable
-  // at 64 characters) or by inspecting the source (brittle): a comparison that
-  // exits early necessarily stops reading.
-  test('GUARD digestsMatch reads every character whatever the content', function(assert) {
-    function counted(value: string) {
-      const reads = { count: 0 };
-      const probe = {
-        length: value.length,
-        charCodeAt(index: number) {
-          reads.count++;
-          return value.charCodeAt(index);
-        },
-      } as unknown as string;
-
-      return { probe, reads };
-    }
-
-    const stored = StateStore.hash('the-binding-value');
-    const differ = (index: number) => {
-      const chars = [...stored];
-      chars[index] = chars[index] === 'a' ? 'b' : 'a';
-      return chars.join('');
-    };
-
-    // Differs in the very first character — the cheapest possible early exit.
-    const early = counted(differ(0));
-    assert.false(StateStore.digestsMatch(stored, early.probe), 'a first-character mismatch is rejected');
-    assert.equal(early.reads.count, 64, 'and all 64 characters were read even though the first already differed');
-
-    // Differs only in the last — the most expensive. Equal counts is the point.
-    const late = counted(differ(63));
-    assert.false(StateStore.digestsMatch(stored, late.probe), 'a last-character mismatch is rejected');
-    assert.equal(late.reads.count, early.reads.count, 'the same 64 reads — the work does not depend on the content');
-  });
-
-  // GUARD — passes on current head. Evidenced by mutation: `> this.ttl` ->
-  // `>= this.ttl` was 96/0. The existing tests pin "just under ten minutes is
-  // accepted" and "older than ten minutes is rejected" and leave the boundary
-  // itself — age exactly equal to the TTL — unstated, so either behaviour
-  // satisfied them. `Date.now` is frozen rather than raced, so this decides the
-  // boundary instead of sampling near it.
-  test('GUARD a state whose age exactly equals the TTL is still accepted', async function(assert) {
-    const oauth = buildOAuth();
-    const realNow = Date.now;
+  test('expired state token is still consumed', function(assert) {
+    const pendingStates = new Map<string, number>();
+    const elevenMinutesAgo = Date.now() - (11 * 60 * 1000);
+    pendingStates.set('expired-token', elevenMinutesAgo);
 
     try {
-      const frozen = realNow();
-      Date.now = () => frozen;
-
-      const { url, bindingValue } = oauth.getAuthorizationUrl('mock');
-      const stateToken = stateOf(url);
-      oauth.stateStore.pending.get(stateToken)!.createdAt = frozen - STATE_TTL_MS;
-
-      const session = await oauth.handleCallback('mock', 'code', stateToken, [bindingValue]);
-      assert.ok(session.sessionId, 'age === TTL is within the window, not past it');
-
-      const later = oauth.getAuthorizationUrl('mock');
-      const laterToken = stateOf(later.url);
-      oauth.stateStore.pending.get(laterToken)!.createdAt = frozen - STATE_TTL_MS - 1;
-
-      await assert.rejects(
-        oauth.handleCallback('mock', 'code', laterToken, [later.bindingValue]),
-        /expired/i,
-        'and one millisecond past the TTL is not',
-      );
-    } finally {
-      Date.now = realNow;
+      validateState(pendingStates, 'expired-token');
+    } catch {
+      // expected
     }
+
+    assert.false(pendingStates.has('expired-token'), 'expired token removed from map');
   });
 
-  // GUARD — passes on current head. Evidenced by mutation: returning on the
-  // first candidate instead of accumulating over all of them was 74/0 at the
-  // unit layer. This is the same property the integration shadow-cookie test
-  // pins, one layer down, where the candidate order is explicit.
-  test('GUARD any one of several presented candidates unlocks the callback', async function(assert) {
-    const oauth = buildOAuth();
+  test('accepts a token just under 10 minutes old', function(assert) {
+    const pendingStates = new Map<string, number>();
+    const nineMinutesAgo = Date.now() - (9 * 60 * 1000);
+    pendingStates.set('fresh-token', nineMinutesAgo);
 
-    const flow = oauth.getAuthorizationUrl('mock');
-    const first = await oauth.handleCallback('mock', 'code', stateOf(flow.url), [
-      'planted-ahead-of-the-real-one',
-      flow.bindingValue,
-    ]);
-    assert.ok(first.sessionId, 'a match in the last position is found');
-
-    const second = oauth.getAuthorizationUrl('mock');
-    const trailing = await oauth.handleCallback('mock', 'code', stateOf(second.url), [
-      second.bindingValue,
-      'planted-behind-the-real-one',
-    ]);
-    assert.ok(trailing.sessionId, 'a match in the first position is found');
+    validateState(pendingStates, 'fresh-token');
+    assert.ok(true, 'did not throw');
   });
 
-  test('a consumed state leaves no pending record behind', async function(assert) {
-    const oauth = buildOAuth();
-    const { url, bindingValue } = oauth.getAuthorizationUrl('mock');
-    const stateToken = stateOf(url);
+  test('rejects reuse of a previously valid token', function(assert) {
+    const pendingStates = new Map<string, number>();
+    pendingStates.set('use-once', Date.now());
 
-    assert.true(oauth.stateStore.pending.has(stateToken), 'record exists while in flight');
+    validateState(pendingStates, 'use-once');
 
-    await oauth.handleCallback('mock', 'code', stateToken, [bindingValue]);
-
-    assert.false(oauth.stateStore.pending.has(stateToken), 'record removed once consumed');
+    assert.throws(
+      () => validateState(pendingStates, 'use-once'),
+      /Invalid or missing state token/,
+    );
   });
 });

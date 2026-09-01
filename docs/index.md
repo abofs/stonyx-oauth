@@ -7,7 +7,6 @@ OAuth2 authentication module for the Stonyx framework. Provides a generic OAuth2
 - [Setup & Configuration](../README.md#setup) -- installation and `config/environment.js` options
 - [Routes](../README.md#routes) -- auto-registered auth endpoints
 - [Supported Providers](../README.md#officially-supported-providers) -- Discord setup
-- [State Binding](../README.md#state-binding-csrf-protection) -- the login CSRF cookie and its required attributes
 - [Custom Providers](../README.md#custom-providers) -- extending `OAuthFlow` for new providers
 - [Session Management](../README.md#session-management) -- in-memory session handling
 - [Release Instructions](release.md)

@@ -68,13 +68,13 @@
   },
   "dependencies": {
     "@stonyx/events": "0.1.1-beta.52",
-    "stonyx": "0.2.3-beta.79"
+    "stonyx": "0.2.3-beta.77"
   },
   "peerDependencies": {
     "@stonyx/rest-server": ">=0.2.1-beta.11"
   },
   "devDependencies": {
-    "@stonyx/rest-server": "0.2.1-beta.96",
+    "@stonyx/rest-server": "0.2.1-beta.83",
     "@stonyx/utils": "0.2.3-beta.26",
     "@stonyx/logs": "1.0.1-beta.19",
     "@types/qunit": "^2.19.13",
