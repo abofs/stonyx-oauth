@@ -7,7 +7,7 @@ import sinon from 'sinon';
 // is a second, never-initialized module instance and reports nothing.
 import OAuth from '@stonyx/oauth';
 
-const { module, test } = QUnit;
+const { module, test, todo } = QUnit;
 let endpoint: string;
 
 
@@ -396,5 +396,37 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
 
     assert.equal(authenticated.status, 200, 'the issued session validates at GET /auth');
     assert.equal(user.id, 'mock-user-123', 'and resolves to the authenticated user');
+  });
+
+  // ===========================================================================
+  // #45 — the session id must not be delivered in the redirect URL.
+  //
+  // Same reason as the #36 block above: `hooks.after` closes the server, so
+  // these have to live inside this module rather than in a file that sorts
+  // after it.
+  // ===========================================================================
+
+  todo('AC1: the success redirect carries no session id, and no value in it authenticates', function(assert: Assert) {
+    assert.ok(false, 'TODO');
+  });
+
+  todo('AC2: the redirect carries a ticket that is not the session id and does not authenticate', function(assert: Assert) {
+    assert.ok(false, 'TODO');
+  });
+
+  todo('AC3: the exchange ticket is single-use', function(assert: Assert) {
+    assert.ok(false, 'TODO');
+  });
+
+  todo('AC4: the exchange ticket expires, and is still live just under the TTL', function(assert: Assert) {
+    assert.ok(false, 'TODO');
+  });
+
+  todo('AC5: POST /auth/session is reachable cross-origin as a browser would call it', function(assert: Assert) {
+    assert.ok(false, 'TODO');
+  });
+
+  todo('AC7 (GUARD — passes with the fix reverted; not evidence of the fix): login -> callback -> exchange -> /auth -> logout', function(assert: Assert) {
+    assert.ok(false, 'TODO');
   });
 });
