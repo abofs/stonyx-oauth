@@ -56,7 +56,8 @@ The module self-registers the following routes on the rest server:
 |--------|-------|-------------|
 | `GET` | `/auth` | Validate session — send `session-id` header, returns user or 401 |
 | `GET` | `/auth/login/:provider` | Redirects to provider's OAuth2 authorization page |
-| `GET` | `/auth/callback/:provider` | OAuth2 callback — exchanges code for tokens, creates session |
+| `GET` | `/auth/callback/:provider` | OAuth2 callback — exchanges code for tokens, creates session, redirects with a single-use `ticket` |
+| `POST` | `/auth/session` | Redeems the `ticket` for the session id — `application/json`, `{ "ticket": "..." }` |
 | `GET` | `/auth/logout` | Destroys session (send `session-id` header) |
 
 ## Officially Supported Providers
@@ -184,11 +185,95 @@ The cookie name is fixed and its `Path` is `/`, so a second login started in the
 
 This fails closed — no session is minted for the wrong flow, and it is not a way past the binding — but it is an availability regression against the previous behaviour, where two concurrent logins both completed. A user who opens two login tabs has to finish in the one they started last, or retry.
 
+## Session delivery — the exchange ticket
+
+### Breaking changes
+
+**As of the fix for [#45](https://github.com/abofs/stonyx-oauth/issues/45).** This is a break in the **HTTP contract**, not in the JS API.
+
+`GET /auth/callback/:provider` no longer redirects with `?sessionId=`. It redirects with a single-use, 60-second `?ticket=`, which is exchanged for the session id over a JSON `POST`:
+
+```
+GET  /auth/callback/:provider  ->  302 <frontendCallbackUrl>?ticket=<opaque>&expiresAt=<ts>
+POST /auth/session             <-  {"ticket":"<opaque>"}     Content-Type: application/json
+                               ->  200 {"sessionId":"<uuid>","expiresAt":<ts>}
+                               ->  400 on an unknown, spent, expired or unparseable ticket
+```
+
+**Who this breaks, and how:**
+
+| Party | What breaks |
+|---|---|
+| **Any client reading `?sessionId=` off the callback redirect** | Gets `undefined`. The redirect no longer carries a session id under any name. |
+| **Any client that cannot issue a cross-origin `POST`** | Cannot complete a login at all. The exchange is the only way to obtain a session id when `frontendCallbackUrl` is configured. |
+| **Form-encoded callers** | `@stonyx/rest-server` installs `express.json()` only, so a form-encoded body arrives unparsed and the exchange returns `400`. The request **must** be `application/json`. |
+| [`abofs/stonyx-dashboard`](https://github.com/abofs/stonyx-dashboard) | `demo-app/routes/auth/discord-callback.js` reads `?sessionId=`. Tracked at [stonyx-dashboard#103](https://github.com/abofs/stonyx-dashboard/issues/103), which must land before that consumer bumps. |
+| `lynxury/backend` | `test/integration/05-oauth-bypass-test.js` reads `?sessionId=` from the callback redirect. Reds when it bumps off `@stonyx/oauth@0.1.1-beta.157`. |
+| `lynxury/dashboard` | Bumps its `@stonyx/dashboard` commit pin after #103 lands. |
+
+**Unaffected.** The `session-id` **header** contract is unchanged: `GET /auth` and `GET /auth/logout` still authenticate from it, and everything in the [`oauth_state` binding](#login-csrf-protection--the-oauth_state-cookie) is untouched. What changed is how the session id is *delivered once*, not how it is *used afterwards*. The JS API is unchanged — `handleCallback` still returns `{ sessionId, expiresAt }`, and a deployment with **no** `frontendCallbackUrl` configured still gets the session object as the callback's response body, because that is a direct response rather than a value written into a URL.
+
+### Why
+
+The session id is the bearer credential — `GET /auth` authenticates from exactly that value. Delivering it as a query parameter wrote a live 24-hour credential into:
+
+- browser history and the address bar,
+- the `Referer` header on any outbound link from the landing page,
+- proxy, CDN and server access logs,
+- `location.search`, readable by every script on the landing page.
+
+The first and last of those are the app's own to close and nothing in front of the app can close them: no proxy can unwrite a URL the app chose. `Referrer-Policy` and log scrubbing belong to the frontend and to infrastructure respectively, and this change does not attempt them.
+
+### Ticket properties
+
+| Property | Value | Why |
+|---|---|---|
+| Lifetime | **60 seconds** | One redirect plus one page load. Two orders of magnitude tighter than the 600s state TTL, because unlike the state this value travels in a URL. |
+| Uses | **exactly one** | Consumed on recognition, before the TTL is checked, so every ticket gets one attempt whatever the outcome and the route is not a repeatable oracle. |
+| Entropy | 32 random bytes, base64url | Independent of the session id, never derived from it. |
+| Authenticates | **nothing** | `GET /auth` validates against the session store, which has never heard of the ticket. A ticket in a `session-id` header is a `401`. |
+| Failure modes | one indistinguishable `400` | Unknown, spent, expired and unparseable are not told apart. |
+
+### Known residual risk
+
+**This is a reduction, not an elimination.** A ticket observed in the sub-second window *before* the landing page redeems it is redeemable by the observer. What the change buys is the difference between a live 24-hour credential permanently written into history and a one-shot token that is already spent by the time the page renders.
+
+Closing the window means binding the ticket to the client that started the flow, the way [#36](https://github.com/abofs/stonyx-oauth/issues/36) bound the `state`. That binding has to travel on a cookie, and the exchange is cross-origin, so the cookie cannot be sent without `credentials: 'include'` — which needs [`abofs/stonyx-rest-server#45`](https://github.com/abofs/stonyx-rest-server/issues/45) plus a CORS change, since `origin` defaults to `*` and `*` with credentials is spec-forbidden. **That risk belongs to the rest-server layer.** Revisit when it lands.
+
+An abandoned ticket is never garbage-collected, the same pre-existing limitation `pendingStates` has. It is bounded by a 60-second TTL rather than a 600-second one.
+
+### Migration
+
+Read the `ticket`, exchange it, and scrub the URL:
+
+```javascript
+// On the landing page at your `frontendCallbackUrl`, before first paint.
+const params = new URLSearchParams(location.search);
+const ticket = params.get('ticket');
+
+const response = await fetch(`${host}/auth/session`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },  // form-encoded will 400
+  body: JSON.stringify({ ticket }),
+});
+
+if (!response.ok) throw new Error('login failed');  // unknown, spent or expired
+
+const { sessionId, expiresAt } = await response.json();
+
+// The ticket is spent, but do not leave it in the address bar or in history.
+history.replaceState({}, '', location.pathname);
+```
+
+Then send `sessionId` as a `session-id` header exactly as before.
+
+Exchange promptly — the ticket is valid for 60 seconds. Do it in the earliest hook your framework offers (`beforeModel` in Ember, a loader in Remix or React Router), not after the page has rendered.
+
 ## Session Management
 
 Sessions are stored in-memory using a `Map`. Sessions are lost on server restart.
 
-Clients should store the `sessionId` returned from the callback and send it as a `session-id` header on subsequent requests.
+Clients obtain the `sessionId` by redeeming the callback's exchange ticket at `POST /auth/session` — see [Session delivery](#session-delivery--the-exchange-ticket) — and send it as a `session-id` header on subsequent requests. It is never delivered in a URL.
 
 ## License
 
