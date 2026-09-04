@@ -6,7 +6,10 @@ import { setup, emit } from '@stonyx/events';
 import RestServer from '@stonyx/rest-server';
 import TokenManager from './token-manager.js';
 import SessionManager from './session-manager.js';
+import TicketStore from './ticket-store.js';
 import AuthRequest from './auth-request.js';
+import type { RedeemedTicket } from './ticket-store.js';
+import type { SessionResult } from './session-manager.js';
 import type OAuthFlow from './oauth-flow.js';
 
 setup(['authenticate']);
@@ -55,6 +58,7 @@ export default class OAuth {
   pendingStates = new Map<string, PendingState>();
   stateTtl = STATE_TTL_MS;
   sessionManager!: SessionManager;
+  ticketStore = new TicketStore();
   frontendCallbackUrl?: string;
 
   constructor() {
@@ -226,6 +230,23 @@ export default class OAuth {
   /** The provider's configured redirect URI, used to decide the cookie's `Secure`. */
   redirectUriFor(providerName: string): string | undefined {
     return this.providers.get(providerName)?.flow.redirectUri;
+  }
+
+  /**
+   * Mints the value the callback redirect is allowed to put in a URL (#45).
+   *
+   * The session id never travels in the redirect. What travels is a ticket
+   * that is single-use, expires in 60 seconds, and authenticates nothing on
+   * its own — `GET /auth` validates against `sessionManager`, which has never
+   * heard of it.
+   */
+  issueExchangeTicket(session: SessionResult): string {
+    return this.ticketStore.issue(session.sessionId, session.expiresAt);
+  }
+
+  /** Spends a ticket for the session id it stands for, or `null`. */
+  redeemExchangeTicket(ticket: string): RedeemedTicket | null {
+    return this.ticketStore.redeem(ticket);
   }
 
   getSession(sessionId: string) {
