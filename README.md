@@ -202,6 +202,7 @@ This fails closed — no session is minted for the wrong flow, and it is not a w
 GET  /auth/callback/:provider  ->  302 <frontendCallbackUrl>#ticket=<opaque>&expiresAt=<ts>
 POST /auth/session             <-  {"ticket":"<opaque>"}     Content-Type: application/json
                                ->  200 {"sessionId":"<uuid>","expiresAt":<ts>}
+                                   Cache-Control: no-store
                                ->  400 on an unknown, spent, expired or unparseable ticket
 ```
 
@@ -256,6 +257,8 @@ What the fragment does **not** remove is browser history and readability by page
 | Entropy | 32 random bytes, base64url | Independent of the session id, never derived from it. |
 | Authenticates | **nothing** | `GET /auth` validates against the session store, which has never heard of the ticket. A ticket in a `session-id` header is a `401`. |
 | Failure modes | one indistinguishable `400` | Unknown, spent, expired and unparseable are not told apart. |
+| Server-side storage | **SHA-256 digest only** | The store is keyed by the digest of the ticket, never by the ticket, so a heap dump or an accidental log of the map yields a useless digest rather than a live redeemable credential. Same discipline as the `oauth_state` binding, which stores `bindingHash` and never the binding value. No constant-time compare is needed: lookup is a hash probe on a 256-bit key, not a secret-dependent byte comparison. |
+| Exchange response | `Cache-Control: no-store` | The `200` body is the session id. A `POST` is not cacheable without explicit freshness, so this is defence in depth — no intermediary or service worker retains the credential. |
 
 ### Known residual risk
 
