@@ -6,7 +6,8 @@ import { randomBytes } from 'node:crypto';
  * Sized for one redirect plus one page load, and deliberately two orders of
  * magnitude tighter than the 10-minute state TTL: the ticket is a bearer value
  * travelling in a URL, and the whole point of #45 is that a bearer value in a
- * URL must not be long-lived.
+ * URL must not be long-lived — in the fragment, so it reaches no server, but
+ * still into browser history and readable by scripts on the landing page.
  */
 export const TICKET_TTL_MS = 60 * 1000;
 
@@ -28,21 +29,56 @@ export interface RedeemedTicket {
  * Single-use, short-lived tickets that stand in for a session id on the wire.
  *
  * The callback redirect hands the browser a ticket instead of the session id
- * (#45). The ticket authenticates nothing — `GET /auth` reads the `session-id`
- * header and knows only about `SessionManager` — so a ticket observed in
- * history, in a `Referer`, or by a script reading `location.search` is worth
- * something only inside the sub-second window before the landing page redeems
- * it, and nothing at all afterwards.
+ * (#45), in the URL *fragment*, which no user agent transmits to any server.
+ * The ticket authenticates nothing — `GET /auth` reads the `session-id` header
+ * and knows only about `SessionManager` — so a ticket observed in history or
+ * by a script reading `location.hash` is worth something only inside the
+ * sub-second window before the landing page redeems it, and nothing at all
+ * afterwards.
  *
  * Known residual, stated rather than papered over: a ticket observed *within*
- * that window is redeemable by the observer. Closing it means binding the
- * ticket to the client the way #36 bound the state, and that binding has to
- * travel on a cookie the cross-origin exchange cannot carry today — see
- * `abofs/stonyx-rest-server#45`. It is a reduction, not an elimination.
+ * that window is redeemable by the observer, because nothing here binds a
+ * ticket to the client that started the flow. Closing it means binding the way
+ * #36 bound the state, and that binding has to travel on a cookie the
+ * cross-origin exchange cannot carry.
+ *
+ * The blocker is `abofs/stonyx-rest-server#63`: `@stonyx/rest-server` calls
+ * `cors({ origin, methods })` and has no `credentials` support at all. It is
+ * *not* `abofs/stonyx-rest-server#45` — that issue is the response-header half
+ * and is already worked around in `auth-request.ts`, which sets and clears the
+ * binding cookie on a redirect by reaching through `req.res`. Closing #45
+ * would not make this residual closeable. It is a reduction, not an
+ * elimination.
  *
  * Like `OAuth.pendingStates`, an abandoned ticket is never collected. That is
  * a pre-existing pattern in this module, not something this store introduces,
  * and it is bounded here by a 60-second TTL rather than a 10-minute one.
+ * Tracked, with both maps named, at `abofs/stonyx-oauth#43`.
+ *
+ * ---
+ *
+ * **Why this is a second store rather than a reuse of `OAuth.pendingStates`.**
+ *
+ * The duplication is real and is not an oversight: `pendingStates` is also a
+ * single-use, TTL-bounded, consume-on-recognition map keyed by a
+ * `randomBytes`-minted opaque token, with the same delete-before-TTL-check
+ * ordering and the same never-collected caveat. The shared shape could be
+ * extracted into one primitive, and the two constants homes (`STATE_TTL_MS`
+ * and `BINDING_VALUE_BYTES` in `main.ts`, `TICKET_TTL_MS` and `TICKET_BYTES`
+ * here) could then live together.
+ *
+ * It is deliberately not done in the change that fixes #45. Widening a
+ * security fix into a refactor of the CSRF store means the #36 binding
+ * mechanism — whose invariants are load-bearing and separately guarded — moves
+ * in the same commit as the fix, for no security gain in either. The two also
+ * do not have the same invariants: `pendingStates` is a security control fed
+ * by an unauthenticated `GET`, holding a *digest* of a client secret, with a
+ * 10-minute budget sized for a provider round trip; this is a delivery
+ * convenience reachable only after a successfully bound callback, holding a
+ * value it hands back, with a 60-second budget sized for a page load.
+ * Collapsing them would couple the control to the convenience.
+ *
+ * The extraction is tracked at `abofs/stonyx-oauth#58`.
  */
 export default class TicketStore {
   tickets = new Map<string, TicketRecord>();
