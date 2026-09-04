@@ -317,6 +317,70 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
     assert.equal(sessions.size, before, 'no session minted server-side');
   });
 
+  test('AC7: the binding cookie is read by name from anywhere in the Cookie header, and only under its own name', async function(assert: Assert) {
+    const { sessions } = OAuth.instance!.sessionManager;
+
+    // The whole point of `readBindingCookies` is that it parses the header
+    // rather than reading position 0, and the whole point of
+    // `anyCandidateMatches` is that it scans every value carrying the name.
+    // Both are reasoned about at length in the source and covered at the unit
+    // layer, but the ordering they defend against only exists on the wire — a
+    // browser that already holds any other cookie for this host sends
+    // `Cookie: session=x; oauth_state=y`. Nothing else in the suite ever puts
+    // `oauth_state` anywhere but first.
+
+    const trailing = await login(endpoint);
+    const trailingValue = parseSetCookie(trailing.setCookie[0] ?? '').value;
+    const before = sessions.size;
+
+    const accepted = await fetch(callbackUrl(endpoint, trailing.state), {
+      redirect: 'manual',
+      headers: { cookie: `session=unrelated; ${STATE_COOKIE_NAME}=${trailingValue}` },
+    });
+
+    assert.ok(
+      new URL(accepted.headers.get('location')!).searchParams.get('sessionId'),
+      'a browser holding another cookie first still completes the login',
+    );
+    assert.equal(sessions.size, before + 1, 'and the session is minted server-side');
+
+    // RFC 6265 section 4.2.1 allows optional whitespace around the delimiter,
+    // so both halves of the pair are trimmed, not just the name.
+    const padded = await login(endpoint);
+    const paddedValue = parseSetCookie(padded.setCookie[0] ?? '').value;
+
+    const acceptedPadded = await fetch(callbackUrl(endpoint, padded.state), {
+      redirect: 'manual',
+      headers: { cookie: `a=1; b=2 ; ${STATE_COOKIE_NAME} = ${paddedValue}` },
+    });
+
+    assert.ok(
+      new URL(acceptedPadded.headers.get('location')!).searchParams.get('sessionId'),
+      'a deeply nested, whitespace-padded pair is still read',
+    );
+
+    // The negative half: presenting the correct binding value under some other
+    // cookie name must not authenticate. Without this, dropping the name check
+    // entirely — accepting every value in the header as a candidate — passes.
+    const decoyed = await login(endpoint);
+    const decoyedValue = parseSetCookie(decoyed.setCookie[0] ?? '').value;
+    const beforeDecoy = sessions.size;
+
+    const rejected = await fetch(callbackUrl(endpoint, decoyed.state), {
+      redirect: 'manual',
+      headers: { cookie: `session=${decoyedValue}; ${STATE_COOKIE_NAME}=not-the-binding-value` },
+    });
+    const redirect = new URL(rejected.headers.get('location')!);
+
+    assert.equal(
+      redirect.searchParams.get('error'),
+      'auth_failed',
+      'the binding value under a different cookie name is not a candidate',
+    );
+    assert.notOk(redirect.searchParams.get('sessionId'), 'no sessionId handed to the caller');
+    assert.equal(sessions.size, beforeDecoy, 'no session minted server-side');
+  });
+
   test('AC6 (GUARD — passes with the fix reverted; not evidence of the fix): the same-client flow still works', async function(assert: Assert) {
     const { state, cookie } = await login(endpoint);
 
