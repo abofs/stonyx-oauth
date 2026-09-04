@@ -118,9 +118,23 @@ providers: {
 
 ## Login CSRF protection — the `oauth_state` cookie
 
-**Breaking, as of the fix for [#36](https://github.com/abofs/stonyx-oauth/issues/36): the login flow now requires a cookie jar.** A client that cannot hold a cookie between `/auth/login/:provider` and `/auth/callback/:provider` can no longer complete a login. That is the point of the change — see [Migration](#migration-from-a-cookie-less-client) below.
+**Breaking, as of the fix for [#36](https://github.com/abofs/stonyx-oauth/issues/36).** Two separate breaks — an integration can hit either one independently.
 
-`GET /auth/login/:provider` issues a single-use `oauth_state` cookie and keeps only its SHA-256 server-side. `GET /auth/callback/:provider` accepts an OAuth2 `state` only from a caller that also presents the matching cookie value.
+**1. The login flow now requires a cookie jar.** A client that cannot hold a cookie between `/auth/login/:provider` and `/auth/callback/:provider` can no longer complete a login. That is the point of the change — see [Migration](#migration-from-a-cookie-less-client) below.
+
+**2. The JS API changed shape.** This one is invisible to anyone who only reads the cookie disclosure above. If you import the module's default export and call it directly — wrapping it, monkeypatching it, or driving it in tests — three things changed:
+
+| | Before | After |
+|---|--------|-------|
+| `getAuthorizationUrl(provider)` | returns the authorization URL as a `string` | returns `{ url, stateToken, bindingValue }` |
+| `handleCallback(provider, code, state)` | three arguments | requires a fourth, `bindingValues: readonly string[]` — every value the caller presented under the `oauth_state` cookie name |
+| `pendingStates` values | `number` (a creation timestamp) | `{ bindingHash, createdAt }` |
+
+None of these throws at import time, and a `typeof … === 'function'` surface check passes on all three: the arity and the return type change, not the presence. Callers must be updated by inspection.
+
+The HTTP contract is otherwise unchanged — both routes still `302`, the [route table](#routes) is the same, and no config key was added or changed.
+
+`GET /auth/login/:provider` issues an `oauth_state` cookie carrying a per-flow binding value, and keeps only its SHA-256 server-side. `GET /auth/callback/:provider` accepts an OAuth2 `state` only from a caller that also presents the matching cookie value.
 
 Without it, `state` was verified by membership in a server-side map plus an age bound, and nothing else. There was no value the browser that started the flow carried that another browser did not, so an attacker could start a login, harvest their own `state` and `code`, deliver them to a victim over a plain link, and log that victim into the *attacker's* account (RFC 6749 §10.12, RFC 9700). The victim's own account and data are not exposed; what is at risk is whatever they author afterwards, believing the session is theirs.
 
@@ -128,7 +142,7 @@ Without it, `state` was verified by membership in a server-side map plus an age 
 
 | Attribute | Value | Why |
 |-----------|-------|-----|
-| Name | `oauth_state` | Single-use; issued at login, cleared on a successful callback |
+| Name | `oauth_state` | Issued at login, cleared on a successful callback. The *state* is single-use; the cookie name is fixed, so it is not — see [Concurrent logins](#concurrent-logins-in-the-same-browser) |
 | `HttpOnly` | always | Script must not be able to read or forge the binding value |
 | `SameSite` | `Lax` | **Required.** The callback is a cross-site, top-level GET navigation from the provider. `Strict` withholds the cookie on exactly that request and breaks every login |
 | `Path` | `/` | Routing is case-insensitive; RFC 6265 `Path` matching is not. A narrower path silently drops the cookie on a case-varied callback |
@@ -140,8 +154,9 @@ If the runtime cannot set the cookie, `/auth/login/:provider` returns `500` and 
 ### Requirements for consumers
 
 - **Start the login as a top-level navigation** (`window.location = '/auth/login/discord'`, or a plain link). This is the documented pattern and it avoids CORS entirely.
-- **Serve login and callback from the same origin.** A cookie set on the login origin is not sent to a different callback origin, and the login fails.
-- An XHR-initiated login will not work: `@stonyx/rest-server` sets `origin: '*'` without `credentials: true`, so the browser will neither store nor send the cookie on a cross-origin XHR.
+- **Serve login and callback from the same host.** The cookie is host-scoped and carries no `Domain` attribute. A **different port on the same host is fine** — port is not part of cookie scope (RFC 6265 §8.5) — but a different *hostname* is not: the cookie is never sent and the login fails. Both routes are mounted on the same `AuthRequest`, so this only bites when something in front of the app splits them across hostnames (a proxy split, or `app.example.com` for login and `example.com` for the callback).
+- **Keep your configured `redirectUri` on the same scheme the login endpoint is served over.** `Secure` is derived from `redirectUri`, so an `https` `redirectUri` behind a plaintext login endpoint issues a `Secure` cookie that the browser silently discards. Every login then fails the binding check **with no server-side signal** — the callback simply reports `auth_failed`. Check this first if logins start failing after a TLS or proxy change.
+- An XHR-initiated login will not work: `@stonyx/rest-server` never passes `credentials: true` to CORS, so the browser will neither store nor send the cookie on a cross-origin XHR. Narrowing `REST_CORS_ORIGIN` from its `*` default does not change this.
 
 ### Migration from a cookie-less client
 
@@ -160,6 +175,12 @@ await fetch(`${host}/auth/callback/discord?code=${code}&state=${state}`, {
 ```
 
 In a browser, `fetch` needs `credentials: 'include'` for a cross-origin request — but see the CORS caveat above; a top-level navigation is the supported path.
+
+### Concurrent logins in the same browser
+
+The cookie name is fixed and its `Path` is `/`, so a second login started in the same browser overwrites the first tab's binding value. The first tab's callback then presents the second tab's value, fails the binding check, and redirects with `error=auth_failed`.
+
+This fails closed — no session is minted for the wrong flow, and it is not a way past the binding — but it is an availability regression against the previous behaviour, where two concurrent logins both completed. A user who opens two login tabs has to finish in the one they started last, or retry.
 
 ## Session Management
 
