@@ -69,6 +69,12 @@ export interface CookieOptions {
 interface ResponseLike {
   cookie(name: string, value: string, options: CookieOptions): unknown;
   clearCookie(name: string, options: Omit<CookieOptions, 'maxAge'>): unknown;
+  /**
+   * Optional: every call site guards on it. `@stonyx/rest-server` hands the
+   * express response through untyped, and a test double need not implement the
+   * whole surface.
+   */
+  setHeader?(name: string, value: string): unknown;
 }
 
 interface RouteRequest {
@@ -226,8 +232,20 @@ export default class AuthRequest extends Request {
        * `null` and the ticket is unreadable. Measured, not assumed.
        *
        * Unknown, spent and expired tickets are one indistinguishable `400`.
+       *
+       * `Cache-Control: no-store` because the `200` body is the session id —
+       * the bearer credential itself. A `POST` response is not cacheable
+       * without explicit freshness, so this is defence in depth rather than a
+       * live defect: it is there so that no intermediary, service worker or
+       * future `GET` variant of this route can retain the credential. Set
+       * through `req.res`, the same reach-through the binding-cookie helpers
+       * use, because `@stonyx/rest-server` has no supported way for a handler
+       * to set a response header (`abofs/stonyx-rest-server#45`).
        */
-      '/session': ({ body }: RouteRequest) => {
+      '/session': (req: RouteRequest) => {
+        const { body, res } = req;
+        if (typeof res?.setHeader === 'function') res.setHeader('Cache-Control', 'no-store');
+
         const ticket = (body as { ticket?: unknown } | null | undefined)?.ticket;
         if (typeof ticket !== 'string' || !ticket) return 400;
 

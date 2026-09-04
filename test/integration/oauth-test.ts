@@ -221,6 +221,18 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
     assert.equal(redirectUrl.search, '', 'and the query carries nothing at all');
   });
 
+  test('the exchange 200 is Cache-Control: no-store — its body is the bearer credential', async function(assert: Assert) {
+    const { ticket } = await completeLogin(endpoint);
+    const response = await exchange(endpoint, ticket);
+
+    assert.equal(response.status, 200, 'the ticket redeemed');
+    assert.equal(
+      response.headers.get('cache-control'),
+      'no-store',
+      'the response carrying the session id is not storable by any intermediary',
+    );
+  });
+
   test('GET /auth with valid session returns user', async function(assert: Assert) {
     const sessionId = await loginAndExchange(endpoint);
 
