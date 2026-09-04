@@ -10,12 +10,6 @@ import OAuth from '@stonyx/oauth';
 const { module, test } = QUnit;
 let endpoint: string;
 
-async function getValidState(endpoint: string): Promise<string> {
-  const loginResponse = await fetch(`${endpoint}/auth/login/mock`, { redirect: 'manual' });
-  const location = loginResponse.headers.get('location');
-  const url = new URL(location!);
-  return url.searchParams.get('state')!;
-}
 
 /**
  * The cookie the login redirect must issue, and that the callback must
@@ -101,8 +95,8 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
   });
 
   test('GET /auth/callback/mock with valid state redirects to frontend with session', async function(assert: Assert) {
-    const stateToken = await getValidState(endpoint);
-    const response = await fetch(`${endpoint}/auth/callback/mock?code=test-auth-code&state=${stateToken}`, { redirect: 'manual' });
+    const { state, cookie } = await login(endpoint);
+    const response = await fetch(callbackUrl(endpoint, state), { redirect: 'manual', headers: { cookie } });
 
     assert.equal(response.status, 302);
 
@@ -114,8 +108,8 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
   });
 
   test('GET /auth with valid session returns user', async function(assert: Assert) {
-    const stateToken = await getValidState(endpoint);
-    const callbackResponse = await fetch(`${endpoint}/auth/callback/mock?code=test-code&state=${stateToken}`, { redirect: 'manual' });
+    const { state, cookie } = await login(endpoint);
+    const callbackResponse = await fetch(callbackUrl(endpoint, state, 'test-code'), { redirect: 'manual', headers: { cookie } });
     const location = callbackResponse.headers.get('location')!;
     const sessionId = new URL(location).searchParams.get('sessionId')!;
 
@@ -143,8 +137,8 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
   });
 
   test('GET /auth/logout invalidates session', async function(assert: Assert) {
-    const stateToken = await getValidState(endpoint);
-    const callbackResponse = await fetch(`${endpoint}/auth/callback/mock?code=test-code&state=${stateToken}`, { redirect: 'manual' });
+    const { state, cookie } = await login(endpoint);
+    const callbackResponse = await fetch(callbackUrl(endpoint, state, 'test-code'), { redirect: 'manual', headers: { cookie } });
     const location = callbackResponse.headers.get('location')!;
     const sessionId = new URL(location).searchParams.get('sessionId')!;
 
@@ -190,16 +184,16 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
   });
 
   test('GET /auth/callback/mock state token cannot be reused', async function(assert: Assert) {
-    const stateToken = await getValidState(endpoint);
+    const { state, cookie } = await login(endpoint);
 
     // First use succeeds
-    const first = await fetch(`${endpoint}/auth/callback/mock?code=test-code&state=${stateToken}`, { redirect: 'manual' });
+    const first = await fetch(callbackUrl(endpoint, state, 'test-code'), { redirect: 'manual', headers: { cookie } });
     assert.equal(first.status, 302);
     const firstLocation = new URL(first.headers.get('location')!);
     assert.ok(firstLocation.searchParams.get('sessionId'), 'first use succeeds');
 
     // Second use fails
-    const second = await fetch(`${endpoint}/auth/callback/mock?code=test-code&state=${stateToken}`, { redirect: 'manual' });
+    const second = await fetch(callbackUrl(endpoint, state, 'test-code'), { redirect: 'manual', headers: { cookie } });
     assert.equal(second.status, 302);
     const secondLocation = new URL(second.headers.get('location')!);
     assert.equal(secondLocation.searchParams.get('error'), 'auth_failed', 'reuse is rejected');

@@ -18,6 +18,7 @@ declare module 'stonyx/config' {
 declare module 'stonyx/log' {
   interface Log {
     oauth(message: string): void;
+    error(message: string): void;
     defineType(type: string, setting: string, options?: Record<string, unknown> | null): void;
     [key: string]: unknown;
   }
