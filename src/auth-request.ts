@@ -173,13 +173,24 @@ export default class AuthRequest extends Request {
             // goes in the URL instead is a single-use 60-second ticket that
             // authenticates nothing, redeemed at `POST /auth/session` (#45).
             //
-            // `expiresAt` stays: it is not a credential and nothing
-            // authenticates from it.
+            // The ticket rides in the *fragment*, not the query. A fragment is
+            // never transmitted to any server by any user agent: it is absent
+            // from the frontend's own access logs, from every reverse proxy
+            // and CDN in front of the landing page, and from `Referer` under
+            // every referrer policy. That removes two of the four leak vectors
+            // #45 names outright, for one character. What it does not remove
+            // is browser history and readability by page scripts — those are
+            // why the ticket is still single-use and 60-second, and why the
+            // documented migration scrubs it with `history.replaceState`.
+            //
+            // `expiresAt` rides along in the same fragment rather than staying
+            // in the query, so the consumer has one place to read from.
+            // It is not a credential and nothing authenticates from it.
             const params = new URLSearchParams({
               ticket: this.oauth.issueExchangeTicket(session),
               expiresAt: String(session.expiresAt),
             });
-            state.redirect = `${this.oauth.frontendCallbackUrl}?${params}`;
+            state.redirect = `${this.oauth.frontendCallbackUrl}#${params}`;
             return;
           }
 

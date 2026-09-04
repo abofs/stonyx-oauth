@@ -68,13 +68,37 @@ function callbackUrl(endpoint: string, stateToken: string, code = 'test-auth-cod
 }
 
 /**
- * The query key the callback redirect is allowed to carry, and the route that
- * redeems it. Pinned here as a wire contract rather than imported from `src/`,
- * so a rename shows up as a deliberate breaking change (#45), exactly as
- * `STATE_COOKIE_NAME` does for #36.
+ * The fragment key the callback redirect is allowed to carry, and the route
+ * that redeems it. Pinned here as a wire contract rather than imported from
+ * `src/`, so a rename shows up as a deliberate breaking change (#45), exactly
+ * as `STATE_COOKIE_NAME` does for #36.
  */
 const TICKET_PARAM = 'ticket';
 const EXCHANGE_ROUTE = '/auth/session';
+
+/**
+ * Every parameter a redirect carries, from the query *and* the fragment.
+ *
+ * The ticket rides in the fragment so it never reaches a server. The guards
+ * below must not narrow along with it: a credential reintroduced in *either*
+ * half has to red. Reading both keeps them anchored to "nothing in this URL
+ * authenticates" rather than to whichever half the ticket currently occupies.
+ */
+function redirectParams(url: URL): Array<[string, string]> {
+  return [...url.searchParams, ...new URLSearchParams(url.hash.slice(1))];
+}
+
+/**
+ * The exchange ticket a redirect carries, wherever it carries it.
+ *
+ * Deliberately reads the query as well as the fragment: the positive
+ * assertions must not stop finding a ticket that regressed back into the
+ * query, and the `notOk` guards must not go green for one that appeared there.
+ */
+function ticketFrom(url: URL): string | null {
+  return new URLSearchParams(url.hash.slice(1)).get(TICKET_PARAM)
+    ?? url.searchParams.get(TICKET_PARAM);
+}
 
 /** Redeems a ticket the way the consumer's landing page does. */
 function exchange(endpoint: string, ticket: string): Promise<Response> {
@@ -101,7 +125,7 @@ async function completeLogin(endpoint: string): Promise<CompletedLogin> {
   });
   const redirect = new URL(response.headers.get('location')!);
 
-  return { redirect, ticket: redirect.searchParams.get(TICKET_PARAM)! };
+  return { redirect, ticket: ticketFrom(redirect)! };
 }
 
 /** Completes a login and redeems its ticket, returning the session id. */
@@ -113,21 +137,21 @@ async function loginAndExchange(endpoint: string): Promise<string> {
 }
 
 /**
- * Asserts that nothing in a URL's query is a credential.
+ * Asserts that nothing in a URL — query or fragment — is a credential.
  *
  * This is the half of #45 that stops a rename from satisfying it vacuously:
  * it does not look for a key called `sessionId`, it feeds *every* value the
- * URL carries to both authenticating surfaces and requires both to refuse.
- * Renaming `sessionId` to `token` would pass a key-absence check and fail this
- * one.
+ * URL carries to the authenticating surface and requires it to refuse.
+ * Renaming `sessionId` to `token`, or moving it from the query into the
+ * fragment, would pass a key-absence check and fail this one.
  */
-async function assertNoCredentialInQuery(assert: Assert, url: URL, label: string): Promise<void> {
-  const entries = [...url.searchParams];
+async function assertNoCredentialInRedirect(assert: Assert, url: URL, label: string): Promise<void> {
+  const entries = redirectParams(url);
   assert.true(entries.length > 0, `${label}: the redirect carries something to check`);
 
   for (const [key, value] of entries) {
     const authenticated = await fetch(`${endpoint}/auth`, { headers: { 'session-id': value } });
-    assert.equal(authenticated.status, 401, `${label}: ?${key}= does not authenticate at GET /auth`);
+    assert.equal(authenticated.status, 401, `${label}: ${key}= does not authenticate at GET /auth`);
   }
 }
 
@@ -143,9 +167,12 @@ async function assertNoCredentialInQuery(assert: Assert, url: URL, label: string
  * `ticket` would slip past a key-absence check and is caught here.
  */
 async function assertNothingRedeemable(assert: Assert, url: URL, label: string): Promise<void> {
-  for (const [key, value] of url.searchParams) {
+  const entries = redirectParams(url);
+  assert.true(entries.length > 0, `${label}: the redirect carries something to check`);
+
+  for (const [key, value] of entries) {
     const exchanged = await exchange(endpoint, value);
-    assert.equal(exchanged.status, 400, `${label}: ?${key}= is not redeemable at POST /auth/session`);
+    assert.equal(exchanged.status, 400, `${label}: ${key}= is not redeemable at POST /auth/session`);
   }
 }
 
@@ -186,8 +213,12 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
     const location = response.headers.get('location')!;
     const redirectUrl = new URL(location);
     assert.equal(redirectUrl.origin + redirectUrl.pathname, 'http://localhost:4200/auth/callback');
-    assert.ok(redirectUrl.searchParams.get(TICKET_PARAM), 'redirect includes an exchange ticket');
-    assert.ok(redirectUrl.searchParams.get('expiresAt'), 'redirect includes expiresAt');
+    assert.ok(ticketFrom(redirectUrl), 'redirect includes an exchange ticket');
+    assert.ok(
+      new URLSearchParams(redirectUrl.hash.slice(1)).get('expiresAt'),
+      'redirect includes expiresAt',
+    );
+    assert.equal(redirectUrl.search, '', 'and the query carries nothing at all');
   });
 
   test('GET /auth with valid session returns user', async function(assert: Assert) {
@@ -267,7 +298,7 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
     const first = await fetch(callbackUrl(endpoint, state, 'test-code'), { redirect: 'manual', headers: { cookie } });
     assert.equal(first.status, 302);
     const firstLocation = new URL(first.headers.get('location')!);
-    assert.ok(firstLocation.searchParams.get(TICKET_PARAM), 'first use succeeds');
+    assert.ok(ticketFrom(firstLocation), 'first use succeeds');
 
     // Second use fails
     const second = await fetch(callbackUrl(endpoint, state, 'test-code'), { redirect: 'manual', headers: { cookie } });
@@ -344,10 +375,10 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
         // same invariant against the shape the redirect actually has now, and
         // reds if a ticket is ever handed to an unbound caller.
         assert.notOk(
-          redirect.searchParams.get(TICKET_PARAM),
+          ticketFrom(redirect),
           `${label}: no exchange ticket handed to the caller`,
         );
-        await assertNoCredentialInQuery(assert, redirect, label);
+        await assertNoCredentialInRedirect(assert, redirect, label);
         await assertNothingRedeemable(assert, redirect, label);
       }
     } finally {
@@ -405,8 +436,8 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
     assert.equal(sessions.size, before, 'no session minted server-side');
 
     // Re-anchored for #45 — see the note on the AC2 guard above.
-    assert.notOk(redirect.searchParams.get(TICKET_PARAM), 'no exchange ticket handed to the caller');
-    await assertNoCredentialInQuery(assert, redirect, 'no binding cookie');
+    assert.notOk(ticketFrom(redirect), 'no exchange ticket handed to the caller');
+    await assertNoCredentialInRedirect(assert, redirect, 'no binding cookie');
     await assertNothingRedeemable(assert, redirect, 'no binding cookie');
   });
 
@@ -432,7 +463,7 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
     });
 
     assert.ok(
-      new URL(accepted.headers.get('location')!).searchParams.get(TICKET_PARAM),
+      ticketFrom(new URL(accepted.headers.get('location')!)),
       'a browser holding another cookie first still completes the login',
     );
     assert.equal(sessions.size, before + 1, 'and the session is minted server-side');
@@ -448,7 +479,7 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
     });
 
     assert.ok(
-      new URL(acceptedPadded.headers.get('location')!).searchParams.get(TICKET_PARAM),
+      ticketFrom(new URL(acceptedPadded.headers.get('location')!)),
       'a deeply nested, whitespace-padded pair is still read',
     );
 
@@ -470,7 +501,15 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
       'auth_failed',
       'the binding value under a different cookie name is not a candidate',
     );
-    assert.notOk(redirect.searchParams.get(TICKET_PARAM), 'no exchange ticket handed to the caller');
+    // Re-anchored for #45, and given the same two rename-proof helpers its AC2
+    // and AC4 siblings got. It had only the key check, which is a key-*absence*
+    // check: measured out-of-sample, a leak of a redeemable value under the key
+    // `token` reds AC2 and AC4 and reports `ok` here. The key check stays as a
+    // readable statement of the wire shape; the two below are what make it fail
+    // for a leak under any key, in the query or the fragment.
+    assert.notOk(ticketFrom(redirect), 'no exchange ticket handed to the caller');
+    await assertNoCredentialInRedirect(assert, redirect, 'the binding value under a decoy name');
+    await assertNothingRedeemable(assert, redirect, 'the binding value under a decoy name');
     assert.equal(sessions.size, beforeDecoy, 'no session minted server-side');
   });
 
@@ -481,7 +520,7 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
       redirect: 'manual',
       headers: cookie ? { cookie } : {},
     });
-    const ticket = new URL(response.headers.get('location')!).searchParams.get(TICKET_PARAM);
+    const ticket = ticketFrom(new URL(response.headers.get('location')!));
     assert.ok(ticket, 'the client that started the flow receives an exchange ticket');
 
     const { sessionId } = await (await exchange(endpoint, ticket!)).json();
@@ -506,16 +545,17 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
     const { redirect } = await completeLogin(endpoint);
 
     assert.equal(
-      redirect.searchParams.get('sessionId'),
+      redirect.searchParams.get('sessionId')
+        ?? new URLSearchParams(redirect.hash.slice(1)).get('sessionId'),
       null,
-      'the session id is not handed over in the URL',
+      'the session id is not handed over in the URL, in either the query or the fragment',
     );
 
     // The half that stops a rename from satisfying this vacuously: every value
     // the URL carries is fed to the surface that authenticates, and every one
     // of them must be refused. `?token=<the session id>` passes the assertion
     // above and fails this one.
-    await assertNoCredentialInQuery(assert, redirect, 'the success redirect');
+    await assertNoCredentialInRedirect(assert, redirect, 'the success redirect');
   });
 
   test('AC2: the redirect carries a ticket that is not the session id and does not authenticate', async function(assert: Assert) {
@@ -603,10 +643,25 @@ module('[Integration] OAuth', function(hooks: NestedHooks) {
       },
     });
 
+    // Status and `allow-origin` alone prove nothing here, and that was measured:
+    // `cors@2.8.6` (lib/index.js:163-181) terminates *every* `OPTIONS` with
+    // `res.statusCode = 204; res.end()` before routing, without consulting the
+    // requested method and without checking the route exists — `OPTIONS
+    // /auth/does-not-exist` also answers 204 with `allow-origin: *`. So those
+    // two assertions cannot fail for the defect this test names.
+    //
+    // `access-control-allow-methods` is the header the browser actually gates
+    // on, and it is the one this module now depends on: before #45 this module
+    // served only `GET`, so a deployment pinned to `REST_CORS_METHODS=GET` lost
+    // nothing. After #45 that same deployment has no working login at all.
     assert.equal(preflight.status, 204, 'the preflight is answered');
     assert.ok(
       preflight.headers.get('access-control-allow-origin'),
       'and allows the requesting origin',
+    );
+    assert.true(
+      (preflight.headers.get('access-control-allow-methods') ?? '').includes('POST'),
+      'and advertises POST, without which the browser never sends the exchange',
     );
 
     const { ticket } = await completeLogin(endpoint);

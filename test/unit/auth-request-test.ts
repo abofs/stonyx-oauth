@@ -21,7 +21,7 @@ const LOOPBACK_REDIRECT_URI = 'http://localhost:2666/auth/callback/mock';
  */
 const STATE_COOKIE_NAME = 'oauth_state';
 
-/** The query key the callback redirect carries after #45. Pinned for the same reason. */
+/** The fragment key the callback redirect carries after #45. Pinned for the same reason. */
 const TICKET_PARAM = 'ticket';
 
 /**
@@ -31,9 +31,15 @@ const TICKET_PARAM = 'ticket';
  * Asserting on the ticket alone would pass against a redirect carrying a
  * random string that redeems for nothing; this resolves it the way the
  * consumer does.
+ *
+ * Reads the query as well as the fragment so that a ticket regressing back
+ * into the query is still found — the guards on this value must not go green
+ * because the credential moved rather than because it left.
  */
 function exchangedSessionId(oauth: OAuth, redirect: string): string | undefined {
-  const ticket = new URL(redirect).searchParams.get(TICKET_PARAM);
+  const url = new URL(redirect);
+  const ticket = new URLSearchParams(url.hash.slice(1)).get(TICKET_PARAM)
+    ?? url.searchParams.get(TICKET_PARAM);
   if (!ticket) return undefined;
 
   return oauth.redeemExchangeTicket(ticket)?.sessionId;
@@ -231,10 +237,17 @@ module('[Unit] AuthRequest binding cookie', function(hooks) {
       res,
     }, routeState);
 
+    const successRedirect = new URL(routeState.redirect!);
     assert.equal(
-      new URL(routeState.redirect!).searchParams.get('sessionId'),
+      successRedirect.searchParams.get('sessionId')
+        ?? new URLSearchParams(successRedirect.hash.slice(1)).get('sessionId'),
       null,
-      'the session id is not written into the redirect URL (#45)',
+      'the session id is not written into the redirect URL, query or fragment (#45)',
+    );
+    assert.equal(
+      successRedirect.search,
+      '',
+      'and the success redirect carries no query at all — the ticket rides in the fragment',
     );
     assert.ok(
       exchangedSessionId(oauth, routeState.redirect!),
