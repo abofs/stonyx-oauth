@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 /**
  * Lifetime of an exchange ticket.
@@ -81,8 +81,27 @@ export interface RedeemedTicket {
  * The extraction is tracked at `abofs/stonyx-oauth#58`.
  */
 export default class TicketStore {
+  /**
+   * Live tickets, keyed by the **SHA-256 of the ticket**, never by the ticket.
+   *
+   * Same discipline as `OAuth.pendingStates`, which holds `bindingHash` and
+   * never the binding value: a ticket is a client-presented secret looked up
+   * server-side, so a heap dump, a debug serialisation or an accidental log of
+   * this map should yield a useless digest rather than a live redeemable
+   * credential. The two secret stores in this module now agree.
+   *
+   * No constant-time comparison is needed and none is used: lookup is a hash
+   * probe on a 256-bit high-entropy key, not a secret-dependent byte
+   * comparison, so there is no early-exit timing signal to exploit. That is
+   * the same reason `redeem` can stay an ordinary `Map.get`.
+   */
   tickets = new Map<string, TicketRecord>();
   ttl = TICKET_TTL_MS;
+
+  /** SHA-256 of a ticket, hex — the only form this store keeps on the heap. */
+  static hash(ticket: string): string {
+    return createHash('sha256').update(ticket).digest('hex');
+  }
 
   /**
    * Mints a ticket for a freshly created session.
@@ -92,7 +111,7 @@ export default class TicketStore {
    */
   issue(sessionId: string, expiresAt: number): string {
     const ticket = randomBytes(TICKET_BYTES).toString('base64url');
-    this.tickets.set(ticket, { sessionId, expiresAt, createdAt: Date.now() });
+    this.tickets.set(TicketStore.hash(ticket), { sessionId, expiresAt, createdAt: Date.now() });
     return ticket;
   }
 
@@ -111,10 +130,11 @@ export default class TicketStore {
    * holder of a ticket they did not mint has no business having.
    */
   redeem(ticket: string): RedeemedTicket | null {
-    const record = ticket ? this.tickets.get(ticket) : undefined;
+    const key = ticket ? TicketStore.hash(ticket) : null;
+    const record = key ? this.tickets.get(key) : undefined;
     if (!record) return null;
 
-    this.tickets.delete(ticket);
+    this.tickets.delete(key!);
 
     if (Date.now() - record.createdAt > this.ttl) return null;
 

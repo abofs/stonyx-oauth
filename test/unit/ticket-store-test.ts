@@ -9,6 +9,7 @@
 // These drive the real `TicketStore`, not a local re-implementation of it.
 import QUnit from 'qunit';
 import sinon from 'sinon';
+import { createHash } from 'node:crypto';
 import TicketStore, { TICKET_TTL_MS } from '../../src/ticket-store.js';
 
 const { module, test } = QUnit;
@@ -36,6 +37,31 @@ module('[Unit] TicketStore', function(hooks: NestedHooks) {
     // Independent entropy, not a deterministic transform: two tickets for the
     // same session must not collide, or a second login would spend the first.
     assert.notEqual(store.issue(SESSION_ID, EXPIRES_AT), ticket, 'two tickets for one session differ');
+  });
+
+  test('the store keys tickets by a digest, never by the ticket itself', function(assert) {
+    const store = new TicketStore();
+    const ticket = store.issue(SESSION_ID, EXPIRES_AT);
+    const [key] = [...store.tickets.keys()];
+
+    // Same discipline as #36's `pendingStates`, which holds `bindingHash` and
+    // never the binding value: whatever reaches this map must not yield a
+    // redeemable credential.
+    assert.notEqual(key, ticket, 'the raw ticket is not the key');
+    assert.false(store.tickets.has(ticket), 'and probing by the raw ticket misses');
+    assert.equal(
+      key,
+      createHash('sha256').update(ticket).digest('hex'),
+      'the key is the SHA-256 of the ticket, computed independently of the store',
+    );
+
+    // The digest must still be the *working* key, or the store would be
+    // consistent and useless.
+    assert.equal(
+      store.redeem(ticket)?.sessionId,
+      SESSION_ID,
+      'and the ticket still redeems through it',
+    );
   });
 
   test('redeem returns the session for a live ticket', function(assert) {
@@ -97,7 +123,13 @@ module('[Unit] TicketStore', function(hooks: NestedHooks) {
     clock.tick(TICKET_TTL_MS + 1_000);
     store.redeem(ticket);
 
-    assert.false(store.tickets.has(ticket), 'the expired ticket is removed from the map');
+    // Probed by digest, not by the raw ticket: the map is keyed by the
+    // SHA-256, so `has(ticket)` would be false however the store behaved
+    // and would assert nothing at all.
+    assert.false(
+      store.tickets.has(TicketStore.hash(ticket)),
+      'the expired ticket is removed from the map',
+    );
     assert.equal(store.tickets.size, 0, 'and nothing else is left behind');
   });
 
