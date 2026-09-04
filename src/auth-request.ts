@@ -43,7 +43,7 @@ interface OAuthInstance {
   logout(sessionId: string): void;
 }
 
-interface CookieOptions {
+export interface CookieOptions {
   httpOnly: boolean;
   sameSite: string;
   path: string;
