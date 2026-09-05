@@ -21,6 +21,30 @@ const LOOPBACK_REDIRECT_URI = 'http://localhost:2666/auth/callback/mock';
  */
 const STATE_COOKIE_NAME = 'oauth_state';
 
+/** The fragment key the callback redirect carries after #45. Pinned for the same reason. */
+const TICKET_PARAM = 'ticket';
+
+/**
+ * The session id a redirect stands for, reached through the exchange rather
+ * than read off the URL.
+ *
+ * Asserting on the ticket alone would pass against a redirect carrying a
+ * random string that redeems for nothing; this resolves it the way the
+ * consumer does.
+ *
+ * Reads the query as well as the fragment so that a ticket regressing back
+ * into the query is still found — the guards on this value must not go green
+ * because the credential moved rather than because it left.
+ */
+function exchangedSessionId(oauth: OAuth, redirect: string): string | undefined {
+  const url = new URL(redirect);
+  const ticket = new URLSearchParams(url.hash.slice(1)).get(TICKET_PARAM)
+    ?? url.searchParams.get(TICKET_PARAM);
+  if (!ticket) return undefined;
+
+  return oauth.redeemExchangeTicket(ticket)?.sessionId;
+}
+
 function buildOAuth(redirectUri: string = LOOPBACK_REDIRECT_URI): OAuth {
   OAuth.instance = null;
 
@@ -213,9 +237,21 @@ module('[Unit] AuthRequest binding cookie', function(hooks) {
       res,
     }, routeState);
 
+    const successRedirect = new URL(routeState.redirect!);
+    assert.equal(
+      successRedirect.searchParams.get('sessionId')
+        ?? new URLSearchParams(successRedirect.hash.slice(1)).get('sessionId'),
+      null,
+      'the session id is not written into the redirect URL, query or fragment (#45)',
+    );
+    assert.equal(
+      successRedirect.search,
+      '',
+      'and the success redirect carries no query at all — the ticket rides in the fragment',
+    );
     assert.ok(
-      new URL(routeState.redirect!).searchParams.get('sessionId'),
-      'the same-client callback minted a session',
+      exchangedSessionId(oauth, routeState.redirect!),
+      'the same-client callback minted a session, reachable through the exchange ticket',
     );
     assert.equal(cleared.length, 1, 'the spent binding cookie is cleared exactly once');
     assert.equal(cleared[0]?.name, STATE_COOKIE_NAME, 'and it is the binding cookie that is cleared');
@@ -268,7 +304,7 @@ module('[Unit] AuthRequest binding cookie', function(hooks) {
     }, real);
 
     assert.ok(
-      new URL(real.redirect!).searchParams.get('sessionId'),
+      exchangedSessionId(oauth, real.redirect!),
       'the victim completes their own login afterwards',
     );
     assert.equal(cleared.length, 1, 'and that success is the only thing that ever clears the cookie');

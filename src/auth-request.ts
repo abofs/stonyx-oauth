@@ -40,6 +40,8 @@ interface OAuthInstance {
     stateToken: string,
     bindingValues: readonly string[],
   ): Promise<{ sessionId: string; expiresAt: number }>;
+  issueExchangeTicket(session: { sessionId: string; expiresAt: number }): string;
+  redeemExchangeTicket(ticket: string): { sessionId: string; expiresAt: number } | null;
   logout(sessionId: string): void;
 }
 
@@ -67,12 +69,26 @@ export interface CookieOptions {
 interface ResponseLike {
   cookie(name: string, value: string, options: CookieOptions): unknown;
   clearCookie(name: string, options: Omit<CookieOptions, 'maxAge'>): unknown;
+  /**
+   * Optional: every call site guards on it. `@stonyx/rest-server` hands the
+   * express response through untyped, and a test double need not implement the
+   * whole surface.
+   */
+  setHeader?(name: string, value: string): unknown;
 }
 
 interface RouteRequest {
   headers: Record<string, string | undefined>;
   params: Record<string, string>;
   query: Record<string, string>;
+  /**
+   * Parsed by `express.json()`, which `@stonyx/rest-server` installs globally.
+   *
+   * Optional and typed loosely because it is whatever an unauthenticated
+   * caller sent: a form-encoded body arrives as `null` and a bodyless request
+   * as `undefined`, so every read of it has to survive both.
+   */
+  body?: unknown;
   res?: ResponseLike;
 }
 
@@ -155,14 +171,38 @@ export default class AuthRequest extends Request {
           this.clearBindingCookie(req, providerName);
 
           if (this.oauth.frontendCallbackUrl) {
+            // The session id is the bearer credential (`GET /auth` above
+            // authenticates from exactly this value), so it must not be
+            // written into a URL: URLs land in browser history, in `Referer`
+            // on any outbound link, in proxy and CDN access logs, and in
+            // `location.search` for every script on the landing page. What
+            // goes in the URL instead is a single-use 60-second ticket that
+            // authenticates nothing, redeemed at `POST /auth/session` (#45).
+            //
+            // The ticket rides in the *fragment*, not the query. A fragment is
+            // never transmitted to any server by any user agent: it is absent
+            // from the frontend's own access logs, from every reverse proxy
+            // and CDN in front of the landing page, and from `Referer` under
+            // every referrer policy. That removes two of the four leak vectors
+            // #45 names outright, for one character. What it does not remove
+            // is browser history and readability by page scripts — those are
+            // why the ticket is still single-use and 60-second, and why the
+            // documented migration scrubs it with `history.replaceState`.
+            //
+            // `expiresAt` rides along in the same fragment rather than staying
+            // in the query, so the consumer has one place to read from.
+            // It is not a credential and nothing authenticates from it.
             const params = new URLSearchParams({
-              sessionId: session.sessionId,
+              ticket: this.oauth.issueExchangeTicket(session),
               expiresAt: String(session.expiresAt),
             });
-            state.redirect = `${this.oauth.frontendCallbackUrl}?${params}`;
+            state.redirect = `${this.oauth.frontendCallbackUrl}#${params}`;
             return;
           }
 
+          // No `frontendCallbackUrl` configured: the session is the response
+          // body of a direct request, not a value handed to a browser through
+          // a URL, so there is nothing here for #45 to fix.
           return session;
         } catch {
           if (this.oauth.frontendCallbackUrl) {
@@ -177,7 +217,44 @@ export default class AuthRequest extends Request {
         const sessionId = headers['session-id'];
         if (sessionId) this.oauth.logout(sessionId);
       },
-    }
+    },
+
+    post: {
+      /**
+       * Redeems the exchange ticket from the callback redirect (#45).
+       *
+       * `POST` and not `GET` because a `GET` would put the ticket back in a
+       * URL — in the caller's history, in access logs — which is the defect
+       * this route exists to close.
+       *
+       * `application/json` and not form-encoded: `@stonyx/rest-server`
+       * installs `express.json()` only, so a form-encoded body arrives as
+       * `null` and the ticket is unreadable. Measured, not assumed.
+       *
+       * Unknown, spent and expired tickets are one indistinguishable `400`.
+       *
+       * `Cache-Control: no-store` because the `200` body is the session id —
+       * the bearer credential itself. A `POST` response is not cacheable
+       * without explicit freshness, so this is defence in depth rather than a
+       * live defect: it is there so that no intermediary, service worker or
+       * future `GET` variant of this route can retain the credential. Set
+       * through `req.res`, the same reach-through the binding-cookie helpers
+       * use, because `@stonyx/rest-server` has no supported way for a handler
+       * to set a response header (`abofs/stonyx-rest-server#45`).
+       */
+      '/session': (req: RouteRequest) => {
+        const { body, res } = req;
+        if (typeof res?.setHeader === 'function') res.setHeader('Cache-Control', 'no-store');
+
+        const ticket = (body as { ticket?: unknown } | null | undefined)?.ticket;
+        if (typeof ticket !== 'string' || !ticket) return 400;
+
+        const session = this.oauth.redeemExchangeTicket(ticket);
+        if (!session) return 400;
+
+        return { sessionId: session.sessionId, expiresAt: session.expiresAt };
+      },
+    },
   };
 
   /**
