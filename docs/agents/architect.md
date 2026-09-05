@@ -20,7 +20,7 @@
 | Session Storage | In-memory `Map` (lost on restart) |
 | Token Exchange | Native `fetch` API |
 | State Tokens | `crypto.randomUUID()` state, plus a 32-byte `randomBytes(BINDING_VALUE_BYTES).toString('base64url')` client binding value (`src/main.ts:167-168`) delivered as the `oauth_state` `HttpOnly` cookie; `pendingStates` stores `{ bindingHash, createdAt }` — the SHA-256 digest, never the binding value (`src/main.ts:170-174`) |
-| Exchange Tickets | 32-byte `randomBytes(TICKET_BYTES).toString('base64url')`, minted per successful callback by `TicketStore` (`src/ticket-store.ts:112-116`), independent entropy never derived from the session id; keyed in the `Map` by its **SHA-256 digest, never by the ticket** (`src/ticket-store.ts:114`) — the same digest-only discipline as `pendingStates`' `bindingHash`, not a divergence from it |
+| Exchange Tickets | 32-byte `randomBytes(TICKET_BYTES).toString('base64url')`, minted per successful callback by `TicketStore` (`src/ticket-store.ts:127-131`), independent entropy never derived from the session id; keyed in the `Map` by its **SHA-256 digest, never by the ticket** (`src/ticket-store.ts:129`) — the same digest-only discipline as `pendingStates`' `bindingHash`, not a divergence from it |
 | Built-in Provider | Discord |
 | Testing | QUnit + Sinon |
 

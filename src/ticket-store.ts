@@ -84,11 +84,26 @@ export default class TicketStore {
   /**
    * Live tickets, keyed by the **SHA-256 of the ticket**, never by the ticket.
    *
-   * Same discipline as `OAuth.pendingStates`, which holds `bindingHash` and
-   * never the binding value: a ticket is a client-presented secret looked up
-   * server-side, so a heap dump, a debug serialisation or an accidental log of
-   * this map should yield a useless digest rather than a live redeemable
-   * credential. The two secret stores in this module now agree.
+   * Keying by the digest means the map holds no redeemable *ticket*: a ticket
+   * is a client-presented secret looked up server-side, so what a reader of
+   * this map gets is a digest, and a digest cannot be presented to `redeem`.
+   *
+   * That does not make the map safe to expose. The record *value* holds a
+   * plaintext, live `sessionId` — the 24-hour bearer credential this store
+   * exists to keep out of URLs — so a heap dump, a debug serialisation or an
+   * accidental log of this map yields live session ids. The map is sensitive
+   * on that basis and must not be dumped or logged. Whether the stored
+   * `sessionId` should itself be protected is a separate question, and is not
+   * settled here.
+   *
+   * This is the mirror image of `OAuth.pendingStates`, not the same shape:
+   * there the *key* is the plaintext state token and the digest
+   * (`bindingHash`) sits in the value, so that record unlocks nothing on its
+   * own; here the digest is the key and the value is a live credential. What
+   * the two stores share is the discipline of never keeping a
+   * client-presented secret in the clear — neither the ticket nor the binding
+   * value is on the heap — but they place the digest on opposite sides of the
+   * entry.
    *
    * No constant-time comparison is needed and none is used: lookup is a hash
    * probe on a 256-bit high-entropy key, not a secret-dependent byte
@@ -98,7 +113,7 @@ export default class TicketStore {
   tickets = new Map<string, TicketRecord>();
   ttl = TICKET_TTL_MS;
 
-  /** SHA-256 of a ticket, hex — the only form this store keeps on the heap. */
+  /** SHA-256 of a ticket, hex — the only form of the *ticket* this store keeps. */
   static hash(ticket: string): string {
     return createHash('sha256').update(ticket).digest('hex');
   }
