@@ -18,6 +18,21 @@ Requires `@stonyx/rest-server` as a peer dependency.
 
 The module auto-discovers and initializes via the Stonyx module loader — no changes needed in `app.js`.
 
+## Entry points
+
+| Import | Default export |
+|--------|----------------|
+| `@stonyx/oauth` | `OAuth`, the module singleton (loaded for you by the Stonyx module loader) |
+| `@stonyx/oauth/oauth-flow` | `OAuthFlow`, the base class for [custom providers](#custom-providers) |
+| `@stonyx/oauth/auth-request` | `AuthRequest`, the `/auth/*` route handlers |
+| `@stonyx/oauth/session-manager` | `SessionManager` |
+| `@stonyx/oauth/token-manager` | `TokenManager` |
+| `@stonyx/oauth/providers/discord` | `DiscordProvider` |
+
+## Samples
+
+[`test/sample/`](https://github.com/abofs/stonyx-oauth/tree/dev/test/sample) is the canonical usage reference: it is real consumer code that the test suite loads, so it stays correct. It holds a [custom provider](https://github.com/abofs/stonyx-oauth/blob/dev/test/sample/providers/mock.ts) built on `@stonyx/oauth/oauth-flow`. `test/sample/` is not part of the npm package.
+
 ## Configuration
 
 Add an `oauth` section to your project's `config/environment.js`:
