@@ -42,18 +42,18 @@ export interface RedeemedTicket {
  * #36 bound the state, and that binding has to travel on a cookie the
  * cross-origin exchange cannot carry.
  *
- * The blocker is `abofs/stonyx-rest-server#63`: `@stonyx/rest-server` calls
+ * The obstacle is in `@stonyx/rest-server`, which calls
  * `cors({ origin, methods })` and has no `credentials` support at all. It is
- * *not* `abofs/stonyx-rest-server#45` — that issue is the response-header half
- * and is already worked around in `auth-request.ts`, which sets and clears the
- * binding cookie on a redirect by reaching through `req.res`. Closing #45
- * would not make this residual closeable. It is a reduction, not an
+ * *not* rest-server's missing response-header API — that half is already
+ * worked around in `auth-request.ts`, which sets and clears the binding
+ * cookie on a redirect by reaching through `req.res`, and closing it would
+ * not make this residual closeable. It is a reduction, not an
  * elimination.
  *
  * Like `OAuth.pendingStates`, an abandoned ticket is never collected. That is
  * a pre-existing pattern in this module, not something this store introduces,
  * and it is bounded here by a 60-second TTL rather than a 10-minute one.
- * Tracked, with both maps named, at `abofs/stonyx-oauth#43`.
+ * Neither map is swept; a fix must cover both.
  *
  * ---
  *
@@ -77,8 +77,6 @@ export interface RedeemedTicket {
  * convenience reachable only after a successfully bound callback, holding a
  * value it hands back, with a 60-second budget sized for a page load.
  * Collapsing them would couple the control to the convenience.
- *
- * The extraction is tracked at `abofs/stonyx-oauth#58`.
  */
 export default class TicketStore {
   /**

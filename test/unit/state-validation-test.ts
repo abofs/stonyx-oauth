@@ -143,6 +143,27 @@ module('[Unit] State Validation', function(hooks) {
     assert.equal(oauth.sessionManager.sessions.size, 1, 'the replay minted no second session');
   });
 
+  test('concurrent callbacks with one state mint exactly one session', async function(assert) {
+    const { stateToken, bindingValue } = oauth.getAuthorizationUrl('mock');
+
+    // Both calls start before either settles, so this pins that the record is
+    // consumed synchronously on recognition. The sequential replay test above
+    // cannot see a consume that happens after an await.
+    const results = await Promise.allSettled([
+      oauth.handleCallback('mock', 'test-code', stateToken, [bindingValue]),
+      oauth.handleCallback('mock', 'test-code', stateToken, [bindingValue]),
+    ]);
+
+    assert.deepEqual(
+      results.map(result => result.status).sort(),
+      ['fulfilled', 'rejected'],
+      'one callback succeeds and the other fails',
+    );
+    const rejected = results.find(result => result.status === 'rejected') as PromiseRejectedResult;
+    assert.ok(/Invalid or missing state token/.test(String(rejected.reason)), 'the loser is rejected as an unknown state');
+    assert.equal(oauth.sessionManager.sessions.size, 1, 'one state minted one session');
+  });
+
   // ---------------------------------------------------------------------------
   // #36 — client binding.
   // ---------------------------------------------------------------------------
