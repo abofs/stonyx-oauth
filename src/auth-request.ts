@@ -60,11 +60,10 @@ export interface CookieOptions {
  * is unreachable once `state.redirect` is set (`request.ts` returns on the
  * redirect first), so setting a cookie means reaching for `req.res`.
  *
- * This is a deliberate, sanctioned interim reach-around, not an accident:
- * `abofs/stonyx-rest-server#45` is the reopened successor issue that adds a
- * first-class header/cookie affordance to migrate onto, and it is sequenced
- * after this fix. `setBindingCookie` fails closed if the affordance is not
- * there, which is what contains the dependency.
+ * This is a deliberate interim reach-around, not an accident: rest-server
+ * has no first-class header/cookie affordance yet, and when it gains one these
+ * helpers should migrate onto it. `setBindingCookie` fails closed if
+ * `req.res` lacks the affordance, which is what contains the dependency.
  */
 interface ResponseLike {
   cookie(name: string, value: string, options: CookieOptions): unknown;
