@@ -51,7 +51,8 @@ After a callback, a UUID session id authenticates every request through the `ses
 Consequences:
 - A heap dump, debug serialisation or log of module state leaks live session ids, provider tokens and the client secret. `OAuthFlow` defines no `toJSON`/`toString`, so serialising a provider instance includes `clientSecret`.
 - The ticket store keys by digest, so a reader of the map gets no redeemable ticket. No constant-time compare is needed there: `redeem` is a `Map.get` hash probe on a 256-bit key. A change that puts the ticket back in the key, or widens what the record holds, is a regression (pinned by the unit test "the store keys tickets by a digest, never by the ticket itself").
-- Neither `pendingStates` nor `TicketStore.tickets` is swept; expired entries are removed only when read, so abandoned flows accumulate for the life of the process. A fix must cover both.
+- `pendingStates` has no cap and no sweep. Every unauthenticated `GET /auth/login/:provider` adds one entry, and an expired entry is removed only when a callback reads it, so any client can grow the map without bound until the process restarts. No test bounds `pendingStates.size`.
+- `TicketStore.tickets` is not swept either: an entry expires after 60 seconds but is removed only when read. It is reachable only through a successful, state-bound callback, so it grows with completed logins whose ticket is never redeemed, not with anonymous requests. A fix must cover both maps.
 
 ## Other properties
 

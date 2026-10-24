@@ -22,7 +22,7 @@ The module auto-discovers and initializes via the Stonyx module loader — no ch
 
 | Import | Exports |
 |--------|---------|
-| `@stonyx/oauth` | default `OAuth`, the module singleton (loaded for you by the Stonyx module loader); named `STATE_TTL_MS` and `BINDING_VALUE_BYTES` |
+| `@stonyx/oauth` | default `OAuth`, the module singleton (loaded for you by the Stonyx module loader); named `STATE_TTL_MS` and `BINDING_VALUE_BYTES`. Imports `stonyx/config` and `stonyx/log`, so, like `auth-request`, it can only be imported after Stonyx has initialized |
 | `@stonyx/oauth/oauth-flow` | default `OAuthFlow`, the base class for [custom providers](#custom-providers); types `OAuthConfig`, `TokenResult` |
 | `@stonyx/oauth/auth-request` | default `AuthRequest`, the `/auth/*` route handlers. Imports `stonyx/log`, so it can only be imported after Stonyx has initialized |
 | `@stonyx/oauth/session-manager` | `SessionManager` |
@@ -233,7 +233,7 @@ The success redirect carries **no query string at all**. Read the ticket from `l
 | **Form-encoded callers** | `@stonyx/rest-server` installs `express.json()` only, so a form-encoded body arrives unparsed and the exchange returns `400`. The request **must** be `application/json`. |
 | [`abofs/stonyx-dashboard`](https://github.com/abofs/stonyx-dashboard) | `demo-app/routes/auth/discord-callback.js` reads `?sessionId=`. That route must move to the exchange before that consumer bumps. |
 | `lynxury/backend` | `test/integration/05-oauth-bypass-test.js` reads `?sessionId=` from the callback redirect. Reds when it bumps off `@stonyx/oauth@0.1.1-beta.157`. |
-| `lynxury/dashboard` | Bumps its `@stonyx/dashboard` commit pin after #103 lands. |
+| `lynxury/dashboard` | Bumps its `@stonyx/dashboard` commit pin only after the `abofs/stonyx-dashboard` route above has moved to the exchange. |
 
 ### Deployment prerequisites — the server's own CORS configuration
 
