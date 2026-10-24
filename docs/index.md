@@ -13,4 +13,6 @@ OAuth2 authentication module for the Stonyx framework. Provides a generic OAuth2
 - [Session delivery](../README.md#session-delivery--the-exchange-ticket) -- the single-use exchange ticket, `POST /auth/session`, and the residual pre-exchange window
 - [Breaking changes in #45](../README.md#breaking-changes-45) -- the callback redirect carries a single-use ticket **in the URL fragment** instead of `?sessionId=`; **breaks every query-param and cookie-less caller**, with the migration snippet and the `REST_CORS_METHODS` / `REST_CORS_ORIGIN` deployment prerequisites
 - [Session Management](../README.md#session-management) -- in-memory session handling
+- [Architecture](architecture.md) -- classes, init lifecycle, the `authenticate` event, providers, tokens and sessions
+- [Security model](security.md) -- what each control protects, what is held in memory, and what to verify after a change
 - [Release Instructions](release.md)
