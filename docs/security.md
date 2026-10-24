@@ -31,7 +31,7 @@ After a callback, a UUID session id authenticates every request through the `ses
 
 ## The exchange endpoint
 
-`POST /auth/session` is the only unauthenticated request that returns a credential: it takes an opaque ticket from a JSON body and returns a live session id. (It is not the only unauthenticated write: `GET /auth/login/:provider` adds a `pendingStates` entry per request; see [What is held in memory](#what-is-held-in-memory-and-in-what-form).) Its controls, all of which must survive any change:
+`POST /auth/session` takes an opaque ticket from a JSON body and returns a live session id. It is one of two unauthenticated requests that return a credential: the other is `GET /auth/callback/:provider` itself, which returns the ticket or, without `frontendCallbackUrl`, the session id (see above). (It is not the only unauthenticated write: `GET /auth/login/:provider` adds a `pendingStates` entry per request; see [What is held in memory](#what-is-held-in-memory-and-in-what-form).) Its controls, all of which must survive any change:
 
 - single use, consumed on recognition before the TTL comparison;
 - 60-second TTL (`TICKET_TTL_MS` in `src/ticket-store.ts`);
