@@ -11,12 +11,12 @@ What each control in `@stonyx/oauth` protects, what it does not, and how to chec
 - `/auth/login/:provider` sets the binding value as the `oauth_state` cookie and fails closed: if the cookie cannot be set, the state is withdrawn with `discardState()` and the login returns `500`.
 - `handleCallback()` deletes the record as soon as it recognises the state, before the TTL and binding checks, so a rejected state is still spent and the endpoint is not a repeatable oracle. It rejects an empty candidate list rather than skipping the check, and compares every presented candidate with the constant-time `OAuth.digestsMatch` (see the rationale on `OAuth.anyCandidateMatches`).
 
-**What to verify after a change:** checking only single-use and TTL passes a design with no binding at all. The cases that must stay covered:
+**Regression cases the suite pins** (`test/unit/state-validation-test.ts`, `test/unit/auth-request-test.ts`). Checking only single-use and TTL would pass a design with no binding at all, so all of these matter:
 - the record is consumed on recognition, so a rejected state cannot be retried;
 - an expired record (> 10 minutes) is rejected; a missing or unknown state throws;
 - a callback presenting no binding value, only empty values, or another client's value is rejected;
 - a callback presenting the real value among several same-named candidates is accepted;
-- concurrent callbacks with one state: the second fails;
+- concurrent callbacks with one state: exactly one succeeds and one session is minted (the record is consumed before the first `await`);
 - `/auth/login/:provider` withdraws the state when the cookie cannot be set.
 
 `STATE_TTL_MS` (10 minutes, also the cookie's `Max-Age`) is a replay-window bound and a usability limit, not the CSRF control. Widening it lengthens the window in which a bound state stays live; it does not weaken the binding. Long authorization flows (a user creating a provider account mid-login) can outlive it.
@@ -37,7 +37,7 @@ After a callback, a UUID session id authenticates every request through the `ses
 - 60-second TTL (`TICKET_TTL_MS` in `src/ticket-store.ts`);
 - one indistinguishable `400` for unknown, spent, expired and unparseable tickets.
 
-**Known residual:** nothing binds a ticket to the client that started the flow, so a ticket observed inside its pre-exchange window can be redeemed by the observer. Binding needs a cookie the cross-origin exchange cannot carry; that is blocked on [`abofs/stonyx-rest-server#63`](https://github.com/abofs/stonyx-rest-server/issues/63) (CORS `credentials` unsupported), not on `abofs/stonyx-rest-server#45`. A regression in the controls above is a defect; the residual itself is documented in the README.
+**Known residual:** nothing binds a ticket to the client that started the flow, so a ticket observed inside its pre-exchange window can be redeemed by the observer. Binding needs a cookie the cross-origin exchange cannot carry, and `@stonyx/rest-server` has no CORS `credentials` support (`cors({ origin, methods })` only), so it cannot be closed in this module. Rest-server's lack of a response-header API is not the obstacle: `auth-request.ts` already sets cookies through `req.res`. A regression in the controls above is a defect; the residual itself is documented in the README.
 
 ## What is held in memory, and in what form
 
@@ -51,7 +51,7 @@ After a callback, a UUID session id authenticates every request through the `ses
 Consequences:
 - A heap dump, debug serialisation or log of module state leaks live session ids, provider tokens and the client secret. `OAuthFlow` defines no `toJSON`/`toString`, so serialising a provider instance includes `clientSecret`.
 - The ticket store keys by digest, so a reader of the map gets no redeemable ticket. No constant-time compare is needed there: `redeem` is a `Map.get` hash probe on a 256-bit key. A change that puts the ticket back in the key, or widens what the record holds, is a regression (pinned by the unit test "the store keys tickets by a digest, never by the ticket itself").
-- Neither `pendingStates` nor `TicketStore.tickets` is swept; expired entries are removed only when read. Both sites are tracked together at [stonyx-oauth#43](https://github.com/abofs/stonyx-oauth/issues/43); a fix must cover both.
+- Neither `pendingStates` nor `TicketStore.tickets` is swept; expired entries are removed only when read, so abandoned flows accumulate for the life of the process. A fix must cover both.
 
 ## Other properties
 

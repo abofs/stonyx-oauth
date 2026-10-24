@@ -49,6 +49,7 @@ Because the routes include `POST /auth/session`, the rest server's CORS methods 
 - Token refresh is not automatic. `TokenManager.refresh()` exists, but nothing calls it; a consumer checks `isExpired()` and refreshes itself. There is no background refresh loop.
 - `isExpired()` treats missing `expiresAt` as expired.
 - Sessions live in an in-memory `Map<sessionId, { user, tokens, expiresAt }>`. A restart loses every session; there is no external session store.
+- Pending states, exchange tickets and sessions are all per-process. A multi-worker or multi-instance deployment needs sticky routing for `/auth/*` and every request carrying a `session-id` header: the callback, the `POST /auth/session` exchange that follows it, and later session lookups must reach the process that issued the state, ticket or session.
 - `validate()` returns `null` for an unknown or expired session and deletes an expired one when it is read. Nothing sweeps sessions that are never read again.
 - `sessionDuration` is not validated: zero or a negative value creates sessions that are already expired.
 - `logout()` destroys the session only. It does not call `revokeToken()`, so the provider access token stays valid until the provider expires it.

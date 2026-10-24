@@ -18,13 +18,13 @@ Requires `@stonyx/rest-server` as a peer dependency.
 
 The module auto-discovers and initializes via the Stonyx module loader — no changes needed in `app.js`.
 
-## Entry points
+## Exports
 
-| Import | Default export |
-|--------|----------------|
-| `@stonyx/oauth` | `OAuth`, the module singleton (loaded for you by the Stonyx module loader) |
-| `@stonyx/oauth/oauth-flow` | `OAuthFlow`, the base class for [custom providers](#custom-providers) |
-| `@stonyx/oauth/auth-request` | `AuthRequest`, the `/auth/*` route handlers |
+| Import | Exports |
+|--------|---------|
+| `@stonyx/oauth` | default `OAuth`, the module singleton (loaded for you by the Stonyx module loader); named `STATE_TTL_MS` and `BINDING_VALUE_BYTES` |
+| `@stonyx/oauth/oauth-flow` | default `OAuthFlow`, the base class for [custom providers](#custom-providers); types `OAuthConfig`, `TokenResult` |
+| `@stonyx/oauth/auth-request` | default `AuthRequest`, the `/auth/*` route handlers. Imports `stonyx/log`, so it can only be imported after Stonyx has initialized |
 | `@stonyx/oauth/session-manager` | `SessionManager` |
 | `@stonyx/oauth/token-manager` | `TokenManager` |
 | `@stonyx/oauth/providers/discord` | `DiscordProvider` |
@@ -64,7 +64,7 @@ By default no providers are enabled. Add providers as keys in the `providers` ob
 | `sessionDuration` | `86400` | Session TTL in seconds (default: 24h) |
 | `frontendCallbackUrl` | `null` | Where `GET /auth/callback/:provider` sends the browser after a successful login. **Setting this changes the callback's response shape**: unset, the callback returns `{ sessionId, expiresAt }` as a JSON body; set, it issues a `302` to this URL carrying a single-use exchange ticket in the fragment, which the landing page redeems at `POST /auth/session`. See [Session delivery](#session-delivery--the-exchange-ticket). |
 
-`TICKET_TTL_MS` (60s, the exchange ticket's lifetime) and `STATE_TTL_MS` (600s, the `oauth_state` lifetime) are module constants with no config key today. If your landing page cannot reach its earliest hook inside 60 seconds on a cold boot, the exchange returns `400` and the login dies — see [stonyx-oauth#59](https://github.com/abofs/stonyx-oauth/issues/59).
+`TICKET_TTL_MS` (60s, the exchange ticket's lifetime) and `STATE_TTL_MS` (600s, the `oauth_state` lifetime) are module constants with no config key today. If your landing page cannot reach its earliest hook inside 60 seconds on a cold boot, the exchange returns `400` and the login dies.
 
 ## Routes
 
@@ -231,7 +231,7 @@ The success redirect carries **no query string at all**. Read the ticket from `l
 | **Any client reading the callback redirect's query at all** | Gets an empty query on success. Both the ticket and `expiresAt` are in the fragment. A server-side reader **cannot** see either — that is the point, and it is why a browser-side handler is required. |
 | **Any client that cannot issue a cross-origin `POST`** | Cannot complete a login at all. The exchange is the only way to obtain a session id when `frontendCallbackUrl` is configured. |
 | **Form-encoded callers** | `@stonyx/rest-server` installs `express.json()` only, so a form-encoded body arrives unparsed and the exchange returns `400`. The request **must** be `application/json`. |
-| [`abofs/stonyx-dashboard`](https://github.com/abofs/stonyx-dashboard) | `demo-app/routes/auth/discord-callback.js` reads `?sessionId=`. Tracked at [stonyx-dashboard#103](https://github.com/abofs/stonyx-dashboard/issues/103), which must land before that consumer bumps. |
+| [`abofs/stonyx-dashboard`](https://github.com/abofs/stonyx-dashboard) | `demo-app/routes/auth/discord-callback.js` reads `?sessionId=`. That route must move to the exchange before that consumer bumps. |
 | `lynxury/backend` | `test/integration/05-oauth-bypass-test.js` reads `?sessionId=` from the callback redirect. Reds when it bumps off `@stonyx/oauth@0.1.1-beta.157`. |
 | `lynxury/dashboard` | Bumps its `@stonyx/dashboard` commit pin after #103 lands. |
 
@@ -281,11 +281,11 @@ What the fragment does **not** remove is browser history and readability by page
 
 Closing the window means binding the ticket to the client that started the flow, the way [#36](https://github.com/abofs/stonyx-oauth/issues/36) bound the `state`. That binding has to travel on a cookie, and the exchange is cross-origin, so the cookie cannot be sent without `credentials: 'include'`.
 
-The blocker is [**`abofs/stonyx-rest-server#63`**](https://github.com/abofs/stonyx-rest-server/issues/63) — `@stonyx/rest-server` calls `cors({ origin, methods })` and has no `credentials` support at all: no `credentials: true`, no `REST_CORS_CREDENTIALS`. A cookie-bound exchange is impossible until that lands, and it will also require pinning `REST_CORS_ORIGIN`, since `*` with credentials is spec-forbidden.
+What prevents it is in `@stonyx/rest-server`: it calls `cors({ origin, methods })` and has no `credentials` support at all: no `credentials: true`, no `REST_CORS_CREDENTIALS`. A cookie-bound exchange is impossible until rest-server supports CORS credentials, and it will also require pinning `REST_CORS_ORIGIN`, since `*` with credentials is spec-forbidden.
 
-It is **not** blocked on [`abofs/stonyx-rest-server#45`](https://github.com/abofs/stonyx-rest-server/issues/45) (*"no supported way for a route handler to set a response header"*). That gap is real but is an ergonomics dependency, and it is already worked around in this very file — `setBindingCookie`/`clearBindingCookie` set and clear cookies on a redirect today by reaching through `req.res`. Closing #45 would not make this residual closeable. **That risk belongs to the rest-server layer.** Revisit when #63 lands.
+It is **not** blocked on rest-server's lack of a supported way for a route handler to set a response header. That gap is real but is an ergonomics dependency, and it is already worked around in `src/auth-request.ts`: `setBindingCookie`/`clearBindingCookie` set and clear cookies on a redirect today by reaching through `req.res`. Closing that gap would not make this residual closeable. **That risk belongs to the rest-server layer.** Revisit when rest-server supports CORS credentials.
 
-An abandoned ticket is never garbage-collected, the same pre-existing limitation `pendingStates` has. It is bounded by a 60-second TTL rather than a 600-second one. Both maps are tracked at [stonyx-oauth#43](https://github.com/abofs/stonyx-oauth/issues/43), which names each site so a fix cannot sweep one and leave the other.
+An abandoned ticket is never garbage-collected, the same pre-existing limitation `pendingStates` has. It is bounded by a 60-second TTL rather than a 600-second one. Neither map is swept today; a fix must cover both, so it cannot sweep one and leave the other.
 
 ### Migration
 
