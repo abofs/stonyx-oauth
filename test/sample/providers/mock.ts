@@ -1,5 +1,5 @@
 import OAuthFlow from '@stonyx/oauth/oauth-flow';
-import type { OAuthConfig, TokenResult } from '../../../src/oauth-flow.js';
+import type { OAuthConfig, TokenResult } from '@stonyx/oauth/oauth-flow';
 
 interface MockUser {
   id: string;
